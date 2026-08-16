@@ -1,0 +1,169 @@
+/**
+ * 全流程 UI 煙霧測試（需要 playwright，非專案必要相依）
+ *   1. 先另開一個終端機跑 npm run build && npm run start
+ *   2. node tests/ui-smoke.mjs
+ *
+ * 會走過：身分選擇 → 主持人開場 → 玩家「無此場次」→ 玩家入場 →
+ *         主持人發放資源 → 玩家端即時更新 → 階段切換。
+ */
+import { chromium } from "playwright";
+
+const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3100";
+const SHOTS = process.env.SHOTS ?? null;
+const PIN = "8888";
+
+/** 每次跑都用一個沒被用過的場次，測試才能重複執行 */
+function randomSessionCode() {
+  const y = 2030 + Math.floor(Math.random() * 6);
+  const m = 1 + Math.floor(Math.random() * 12);
+  const d = 1 + Math.floor(Math.random() * 28);
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+const CODE = process.env.SESSION_CODE ?? randomSessionCode();
+/** 玩家端故意用不補零的斜線寫法，順便驗證日期解析 */
+const [cy, cm, cd] = CODE.split("-");
+const CODE_LOOSE = `${cy}/${Number(cm)}/${Number(cd)}`;
+
+const shot = async (page, name, opts = {}) =>
+  SHOTS ? page.screenshot({ path: `${SHOTS}/${name}.png`, ...opts }) : null;
+
+console.log(`使用場次 ${CODE}`);
+const browser = await chromium.launch();
+const errors = [];
+const fail = [];
+
+/** 刻意查詢不存在的場次會回 404，那是正確行為，不算錯誤 */
+const EXPECTED_404 = /\/api\/sessions\/2001-01-01$/;
+
+async function newPage(ctx, label) {
+  const page = await ctx.newPage();
+  page.on("console", (m) => {
+    // 瀏覽器會把 HTTP 錯誤也印成 console error，這裡交給 response 監聽判斷
+    if (m.type() === "error" && !m.text().includes("Failed to load resource")) {
+      errors.push(`[${label}] ${m.text()}`);
+    }
+  });
+  page.on("pageerror", (e) => errors.push(`[${label}] pageerror: ${e.message}`));
+  page.on("response", (r) => {
+    if (r.status() >= 400 && !EXPECTED_404.test(r.url())) {
+      errors.push(`[${label}] HTTP ${r.status()} ${r.url()}`);
+    }
+  });
+  return page;
+}
+
+function check(label, actual, expected) {
+  const ok = String(actual) === String(expected);
+  console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}: ${actual}${ok ? "" : ` (預期 ${expected})`}`);
+  if (!ok) fail.push(label);
+}
+
+try {
+  // ---- 1. 首頁身分選擇 ----
+  const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const host = await newPage(desktop, "host");
+  await host.goto(BASE, { waitUntil: "networkidle" });
+  await shot(host, "1-landing");
+  check("首頁標題", await host.title(), "九爺，我想給您養老");
+
+  // ---- 2. 主持人開場次 ----
+  await host.click("text=我是主持人");
+  await host.waitForURL("**/host");
+  await host.fill('input[placeholder="2026-08-16"]', CODE);
+  await host.fill('input[placeholder="例：週六下午場"]', "禮拜四晚場");
+  await host.fill('input[type="password"]', PIN);
+  await shot(host, "2-host-entry");
+  await host.click('button[type="submit"]');
+  await host.waitForURL(`**/host/${CODE}`, { timeout: 20000 });
+  await host.waitForSelector("text=在 場 玩 家");
+  console.log("  PASS  主持人進入主持台");
+
+  // ---- 3. 玩家：先測「無此場次」----
+  const mobile = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+  });
+  const player = await newPage(mobile, "player");
+  await player.goto(BASE, { waitUntil: "networkidle" });
+  await player.click("text=我是玩家");
+  await player.waitForURL("**/player");
+  await player.fill('input[inputmode="numeric"]', "2001-01-01");
+  await player.click('button[type="submit"]');
+  await player.waitForSelector("text=無此場次", { timeout: 15000 });
+  await shot(player, "3-player-no-session");
+  console.log("  PASS  不存在的場次顯示「無此場次」");
+
+  // ---- 4. 玩家用 8/20 這種簡寫入場 ----
+  await player.fill('input[inputmode="numeric"]', CODE_LOOSE);
+  await player.click('button[type="submit"]');
+  await player.waitForURL(`**/player/${CODE}`, { timeout: 20000 });
+  await player.waitForSelector('input[placeholder="例：六姨太"]');
+  await player.fill('input[placeholder="例：六姨太"]', "六姨太");
+  await shot(player, "4-player-join");
+  await player.click('button[type="submit"]');
+  await player.waitForSelector("text=群 芳 榜", { timeout: 20000 });
+  console.log(`  PASS  玩家以「${CODE_LOOSE}」寫法入場成功`);
+
+  for (const name of ["三少爺", "帳房先生"]) {
+    const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const pg = await newPage(ctx, name);
+    await pg.goto(`${BASE}/player/${CODE}`, { waitUntil: "networkidle" });
+    await pg.fill('input[placeholder="例：六姨太"]', name);
+    await pg.click('button[type="submit"]');
+    await pg.waitForSelector("text=群 芳 榜", { timeout: 20000 });
+    await ctx.close();
+  }
+
+  // ---- 5. 主持人發放資源 ----
+  await host.reload({ waitUntil: "networkidle" });
+  await host.waitForSelector("text=六姨太", { timeout: 20000 });
+  await host.fill('input[placeholder^="事由"]', "完成入府考驗");
+  await host.click('button:has-text("全選")');
+  await host.click('button:has-text("+10")');
+  await host.waitForSelector("text=/發放 10 威望/", { timeout: 20000 });
+
+  await host.click('button:has-text("勢力值")');
+  await host.click('button:has-text("清除")');
+  await host.click('div[role="button"]:has-text("六姨太")');
+  await host.fill('input[placeholder^="事由"]', "結盟成功");
+  await host.click('button:has-text("+5")');
+  await host.waitForSelector("text=/發放 5 勢力/", { timeout: 20000 });
+  await shot(host, "5-host-console", { fullPage: true });
+  console.log("  PASS  主持人完成全體與單人發放");
+
+  // ---- 6. 玩家端即時反映（輪詢 3 秒）----
+  await player.waitForFunction(
+    () => /威望值\s*10/.test(document.body.innerText),
+    { timeout: 20000 },
+  );
+  await player.waitForFunction(
+    () => /勢力值\s*5/.test(document.body.innerText),
+    { timeout: 20000 },
+  );
+  await shot(player, "6-player-live", { fullPage: true });
+  const text = await player.innerText("body");
+  check("玩家看到的威望值", /威望值\s*(\d+)/.exec(text)?.[1], "10");
+  check("玩家看到的勢力值", /勢力值\s*(\d+)/.exec(text)?.[1], "5");
+
+  // ---- 7. 階段切換同步 ----
+  await host.click('button:has-text("第一回合")');
+  await player.waitForFunction(
+    () => document.body.innerText.includes("目前階段：第一回合"),
+    { timeout: 20000 },
+  );
+  await shot(player, "7-player-stage", { fullPage: true });
+  console.log("  PASS  階段切換即時同步到玩家端");
+} finally {
+  await browser.close();
+}
+
+if (errors.length) {
+  console.log("\n瀏覽器主控台錯誤：");
+  errors.forEach((e) => console.log("  " + e));
+}
+if (fail.length || errors.length) {
+  console.log(`\n測試未通過（${fail.length} 個斷言失敗、${errors.length} 個主控台錯誤）`);
+  process.exit(1);
+}
+console.log("\nUI 全流程通過，且沒有任何瀏覽器主控台錯誤");
