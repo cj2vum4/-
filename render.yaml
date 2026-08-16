@@ -1,0 +1,20 @@
+# Render 藍圖：在 Render 選 "New > Blueprint" 並指向這個 repo 即可
+#
+# 為什麼推薦 Render：這個專案的寫入鎖與快取都在單一 Node 程序的記憶體裡，
+# 需要「一個長駐實例」而不是會自動水平擴展的 serverless 環境。
+services:
+  - type: web
+    name: jiuye-yanglao
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      # sync: false = 值不寫在 repo 裡，部署後到 Render 後台手動填
+      - key: GOOGLE_SHEETS_SPREADSHEET_ID
+        sync: false
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: NODE_VERSION
+        value: "22"

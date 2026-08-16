@@ -270,6 +270,48 @@ npm run session:remove -- 2031-08-11
 
 ---
 
+## 部署
+
+### ⚠️ 不能用 GitHub Pages
+
+GitHub Pages 只服務靜態檔案，**無法執行這個專案**：
+
+- 專案有 9 個 API routes（`/api/sessions/…`），必須在伺服器上執行
+- Google 服務帳號私鑰**必須留在伺服器端**。若改成純靜態、讓瀏覽器直接呼叫 Google API，
+  等於把私鑰公開給每一位玩家——任何人都能竄改分數或刪掉整份試算表
+- 伺服器端快取與寫入鎖活在 Node 程序記憶體中，沒有伺服器就沒有這兩者
+
+同理，Netlify / Cloudflare Pages 的純靜態模式也不行。需要一個**能跑 Node 的環境**。
+
+### 建議：Render（免費方案即可）
+
+這個專案的鎖與快取都在單一 Node 程序內，最適合「一個長駐實例」的環境。
+
+1. 到 [Render](https://render.com) → New → Blueprint → 指向這個 repo
+2. 它會讀取 `render.yaml` 自動建立服務
+3. 到服務的 Environment 分頁填入兩個變數：
+   - `GOOGLE_SHEETS_SPREADSHEET_ID`
+   - `GOOGLE_SERVICE_ACCOUNT_JSON`（整包 JSON，或 base64）
+4. 部署完成後會得到一組網址，開場前先打開讓它醒著即可
+
+> 免費方案閒置 15 分鐘會休眠，冷啟動約 50 秒。活動開始前先開一次就沒問題。
+
+### 其他選項
+
+| 平台 | 適合度 | 注意事項 |
+|---|---|---|
+| **Render / Railway / Fly.io** | ✅ 最佳 | 單一長駐實例，架構完全吻合。`Dockerfile` 也已備好 |
+| **Vercel** | ⚠️ 可用但有代價 | Next.js 原生支援、部署最快，但 serverless 多實例各有各的快取，玩家可能看到數字忽高忽低。若要用，把 `SESSION_CACHE_TTL_MS` 降到 3000 讓實例間快速收斂 |
+| **本機 + Cloudflare Tunnel** | ✅ 活動現場很實用 | 用筆電跑 `npm start`，開一條 tunnel 給手機連。零成本、零延遲，但依賴現場網路 |
+| **GitHub Pages / 純靜態託管** | ❌ 不可行 | 見上方說明 |
+
+### 部署前提醒
+
+目前 repo 只有 `claude/work-environment-check-6adtk7` 一個分支。多數平台預設會找 `main`，
+請先把這個分支合併到 `main`（或在平台設定中指定要部署的分支）。
+
+---
+
 ## 目前的限制
 
 雛形階段刻意先簡化的部分，正式上線前建議處理：
