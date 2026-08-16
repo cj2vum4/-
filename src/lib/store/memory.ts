@@ -47,11 +47,13 @@ export class MemoryDriver implements StoreDriver {
     buckets.get(code)?.players.push({ ...player });
   }
 
-  async savePlayer(code: string, player: Player): Promise<void> {
+  async savePlayers(code: string, players: Player[]): Promise<void> {
     const list = buckets.get(code)?.players;
     if (!list) return;
-    const i = list.findIndex((p) => p.id === player.id);
-    if (i >= 0) list[i] = { ...player };
+    for (const player of players) {
+      const i = list.findIndex((p) => p.id === player.id);
+      if (i >= 0) list[i] = { ...player };
+    }
   }
 
   async listLog(code: string, limit: number): Promise<LogEntry[]> {
@@ -59,7 +61,8 @@ export class MemoryDriver implements StoreDriver {
     return log.slice(-limit).map((e) => ({ ...e }));
   }
 
-  async appendLog(code: string, entry: LogEntry): Promise<void> {
-    buckets.get(code)?.log.push({ ...entry });
+  async appendLogs(code: string, entries: LogEntry[]): Promise<void> {
+    const log = buckets.get(code)?.log;
+    if (log) log.push(...entries.map((e) => ({ ...e })));
   }
 }

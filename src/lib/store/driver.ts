@@ -17,10 +17,12 @@ export interface StoreDriver {
 
   listPlayers(code: string): Promise<Player[]>;
   createPlayer(code: string, player: Player): Promise<void>;
-  savePlayer(code: string, player: Player): Promise<void>;
+  /** 一次寫回多位玩家。全體發放時若逐筆呼叫 API，20 人要等十幾秒 */
+  savePlayers(code: string, players: Player[]): Promise<void>;
 
   listLog(code: string, limit: number): Promise<LogEntry[]>;
-  appendLog(code: string, entry: LogEntry): Promise<void>;
+  /** 一次補上多筆紀錄，同樣是為了避免逐筆往返 */
+  appendLogs(code: string, entries: LogEntry[]): Promise<void>;
 }
 
 /** 分頁名稱規則：一個場次 = 兩個分頁 */

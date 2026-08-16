@@ -82,7 +82,18 @@ cp .env.example .env.local
 填入 `GOOGLE_SHEETS_SPREADSHEET_ID`，並用三種方式之一提供憑證（詳見 `.env.example`）。
 最省事的是把整包 JSON 貼進 `GOOGLE_SERVICE_ACCOUNT_JSON`。
 
-重啟伺服器，首頁下方會變成「Google Sheet（正式）」。
+### 5. 驗證連線
+
+```bash
+npm run check:sheets
+```
+
+會依序檢查環境變數 → 服務帳號認證 → 試算表讀取 → 寫入權限，
+並針對常見錯誤（沒分享、ID 打錯、金鑰失效）直接告訴你怎麼處理。
+全部通過後重啟伺服器，首頁下方會變成「Google Sheet（正式）」。
+
+> 本專案已用真實試算表完整驗證過：開場、入場、發放、階段切換、
+> 伺服器重啟後資料仍在，以及 25 筆併發發放的正確性。
 
 ---
 
@@ -152,14 +163,30 @@ Google Sheets API 的讀取限制大約是每分鐘 60 次。如果 20 個玩家
 
 因此「100% 用 Google Sheet 記錄」與「幾十個玩家同時看即時數字」可以並存。
 
-**2. 每場次一把寫入鎖，避免算錯數字**
+**2. 每場次一把鎖，避免算錯數字**
 
 發放資源是「讀餘額 → 加減 → 寫回」，主持人手快連按時可能交錯執行而少算。
-`src/lib/game.ts` 的 `withLock()` 把同一場次的寫入串成一條鏈。
-已用 30 筆同時送出的併發測試驗證過，數值精確無誤。
+`src/lib/game.ts` 的 `withLock()` 把同一場次的存取串成一條鏈。
+
+**關鍵是：背景快取刷新也必須走這條鏈。** 否則會發生
+「刷新讀到舊餘額 → 有人發放並寫回 → 刷新結果蓋掉快取 → 下一筆從舊值往上加」，
+中間那筆就憑空消失了。這個 bug 在真實 Google Sheets 環境下實測時被抓到（帳本出現重複餘額），
+已修正並用 25 筆併發驗證：帳本是完整的 1…25 序列，無重複也無遺漏。
 
 > 這把鎖在單一 Node process 內有效。若之後要部署到會自動水平擴展的環境
 > （多個實例同時服務），需要改成外部鎖，或固定跑單一實例。
+
+**3. 批次寫入，讓全體發放維持在一秒內**
+
+逐筆呼叫 Sheets API 每位玩家約 0.7 秒 —— 20 人全體發放要主持人在桌邊乾等 15 秒。
+改成「餘額一次 `values.batchUpdate`、紀錄一次 `values.append`」後，
+不論幾人都只有兩次往返：**實測 20 人從 15 秒降到 0.82 秒**。
+
+**4. 配額重試**
+
+Sheets API 有「每分鐘 60 次寫入」限制，主持人連續快速操作會撞到 429。
+`src/lib/store/sheets.ts` 的 `withRetry()` 以指數退避重試，讓短暫尖峰自己消化掉，
+而不是把錯誤丟給主持人。實測 25 筆瞬間併發全部成功（耗時 11 秒，因退避而拉長，但沒有任何一筆失敗）。
 
 ### 目錄結構
 
@@ -179,6 +206,10 @@ src/
       ├─ driver.ts                儲存層介面 + 欄位定義
       ├─ sheets.ts                Google Sheets 實作
       └─ memory.ts                記憶體實作（無憑證時自動使用）
+
+scripts/
+├─ check-sheets.mjs             Google Sheet 連線診斷
+└─ remove-session.mjs           刪除指定場次
 ```
 
 ---
@@ -216,11 +247,23 @@ export const QUICK_DELTAS = [1, 3, 5, 10, 20];
 
 ```bash
 npm test                      # 日期解析（15 個案例）
+npm run typecheck             # TypeScript 檢查
+npm run check:sheets          # Google Sheet 連線診斷
 
 # 全流程 UI 測試（需另外裝 playwright：npm i -D playwright）
 npm run build && npm start &
-node tests/ui-smoke.mjs
+BASE_URL=http://localhost:3000 node tests/ui-smoke.mjs
 ```
+
+每次跑 UI 測試都會用一個隨機的未來日期當場次，所以可以重複執行。
+測試留下的資料可以用下面的指令清掉：
+
+```bash
+npm run session:remove -- 2031-08-11
+```
+
+`session:remove` 會刪掉指定場次的兩個分頁與總表那一列，
+只接受明確的 `YYYY-MM-DD`，不會誤刪其他分頁。日常清理舊場次也可以用。
 
 `tests/ui-smoke.mjs` 會實際開瀏覽器走完：身分選擇 → 主持人開場 → 玩家「無此場次」
 → 玩家入場 → 主持人發放 → 玩家端即時更新 → 階段切換，並檢查有沒有主控台錯誤。
@@ -237,3 +280,5 @@ node tests/ui-smoke.mjs
 - **單一實例**：寫入鎖與快取都在記憶體，需固定跑一個實例（Render／Railway／自架都可以）。
   若要上 Vercel 這類會自動擴展的環境，得先把鎖改成外部實作。
 - **一天一場**：場次代碼就是日期，同一天目前只能開一場。要一天多場的話，代碼規則要再擴充。
+- **寫入配額**：Sheets API 每分鐘 60 次寫入。正常主持節奏（每分鐘數次發放）遠低於此，
+  已有重試機制吸收尖峰；但若要做成「玩家自己觸發大量寫入」的玩法，就需要改成批次佇列。

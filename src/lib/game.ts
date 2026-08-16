@@ -15,7 +15,7 @@ import type {
 const nanoId = customAlphabet("ABCDEFGHJKMNPQRSTUVWXYZ23456789", 6);
 const nanoCode = customAlphabet("0123456789", 4);
 
-/** 快取存活時間：超過就在背景重新從 Sheets 拉一次，順便撈到手動改表的內容 */
+/** 快取存活時間：超過就重新從 Sheets 拉一次，順便撈到主持人手動改表的內容 */
 const CACHE_TTL_MS = Number(process.env.SESSION_CACHE_TTL_MS ?? 15_000);
 
 interface CacheEntry {
@@ -24,19 +24,25 @@ interface CacheEntry {
   log: LogEntry[];
   rev: number;
   loadedAt: number;
-  refreshing?: Promise<void>;
 }
 
 const g = globalThis as unknown as {
   __jyCache?: Map<string, CacheEntry>;
   __jyLocks?: Map<string, Promise<unknown>>;
+  __jyRefreshing?: Set<string>;
 };
 const cache: Map<string, CacheEntry> = (g.__jyCache ??= new Map());
 const locks: Map<string, Promise<unknown>> = (g.__jyLocks ??= new Map());
+const refreshing: Set<string> = (g.__jyRefreshing ??= new Set());
 
 /**
- * 同一個場次的寫入串成一條鏈，避免「讀取餘額 → 加減 → 寫回」被交錯執行而算錯。
- * 單一 Node process 內有效；多實例部署需改用 Sheets 以外的分散式鎖。
+ * 同一個場次的所有存取都串成一條鏈。
+ *
+ * 不只寫入要鎖 —— 背景重新整理也必須走這條鏈。否則會發生：
+ * 刷新在 t0 讀到舊餘額 → t1 有人發放並寫回 → t2 刷新結果蓋掉快取 →
+ * 下一筆發放從被蓋掉的舊值往上加，前一筆就消失了（lost update）。
+ *
+ * 單一 Node process 內有效；多實例部署需要改成外部鎖。
  */
 function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const prev = locks.get(key) ?? Promise.resolve();
@@ -48,58 +54,59 @@ function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return next;
 }
 
+/** 從資料庫重新載入整個場次。只能在鎖內呼叫。 */
 async function loadEntry(code: string): Promise<CacheEntry> {
   const driver = getDriver();
   const session = await driver.getSession(code);
-  if (!session) throw new GameError("SESSION_NOT_FOUND", "無此場次");
+  if (!session) {
+    cache.delete(code);
+    throw new GameError("SESSION_NOT_FOUND", "無此場次");
+  }
 
   const [players, log] = await Promise.all([
     driver.listPlayers(code),
     driver.listLog(code, LOG_TAIL),
   ]);
 
-  const prev = cache.get(code);
   const entry: CacheEntry = {
     session,
     players,
     log,
-    rev: (prev?.rev ?? 0) + 1,
+    rev: (cache.get(code)?.rev ?? 0) + 1,
     loadedAt: Date.now(),
   };
   cache.set(code, entry);
   return entry;
 }
 
-/**
- * 讀取場次。命中快取就直接回傳（stale-while-revalidate），
- * 這樣不論幾個玩家在輪詢，打到 Google Sheets 的次數都固定，不會撞到 API 配額。
- */
-async function getEntry(code: string, force = false): Promise<CacheEntry> {
-  const hit = cache.get(code);
-  if (!hit || force) return loadEntry(code);
+/** 鎖內使用：快取有就用，沒有才載入。絕不觸發背景刷新，避免遞迴等待同一把鎖。 */
+async function getEntryLocked(code: string): Promise<CacheEntry> {
+  return cache.get(code) ?? loadEntry(code);
+}
 
-  if (Date.now() - hit.loadedAt > CACHE_TTL_MS && !hit.refreshing) {
-    hit.refreshing = loadEntry(code)
-      .then(() => undefined)
+/**
+ * 讀取路徑使用（未持鎖）。命中快取立刻回傳，過期則在鎖內背景刷新，
+ * 因此不論多少玩家同時輪詢，對 Google Sheets 的讀取次數都固定。
+ */
+async function getEntry(code: string): Promise<CacheEntry> {
+  const hit = cache.get(code);
+  if (!hit) return withLock(code, () => loadEntry(code));
+
+  if (Date.now() - hit.loadedAt > CACHE_TTL_MS && !refreshing.has(code)) {
+    refreshing.add(code);
+    void withLock(code, () => loadEntry(code))
       .catch((err) => {
         console.error("[九爺] 背景重新整理失敗", code, err);
       })
-      .finally(() => {
-        const cur = cache.get(code);
-        if (cur) cur.refreshing = undefined;
-      });
+      .finally(() => refreshing.delete(code));
   }
   return hit;
 }
 
-function touch(entry: CacheEntry): void {
-  entry.rev += 1;
-  entry.session.updatedAt = new Date().toISOString();
-}
-
-function pushLog(entry: CacheEntry, log: LogEntry): void {
-  entry.log.push(log);
+function pushLog(entry: CacheEntry, ...logs: LogEntry[]): void {
+  entry.log.push(...logs);
   if (entry.log.length > LOG_TAIL) entry.log.splice(0, entry.log.length - LOG_TAIL);
+  entry.rev += 1;
 }
 
 function makeLog(partial: Partial<LogEntry> & { type: LogType }): LogEntry {
@@ -142,10 +149,10 @@ export async function createSession(input: {
     };
 
     await driver.createSession(meta);
-    await driver.appendLog(
-      input.code,
+    await driver.appendLogs(input.code, [
       makeLog({ type: "session", reason: `開啟場次「${meta.title}」`, operator: "主持人" }),
-    );
+    ]);
+
     cache.delete(input.code);
     await loadEntry(input.code);
     return meta;
@@ -154,8 +161,7 @@ export async function createSession(input: {
 
 /** 玩家輸入場次時用的檢查，找不到就是「無此場次」 */
 export async function findSession(code: string): Promise<SessionMeta> {
-  const entry = await getEntry(code);
-  return entry.session;
+  return (await getEntry(code)).session;
 }
 
 export async function listSessions(): Promise<Array<Omit<SessionMeta, "hostPin">>> {
@@ -204,19 +210,21 @@ export async function setStage(code: string, stageId: string): Promise<SessionMe
   if (!stage) throw new GameError("BAD_REQUEST", "未知的階段");
 
   return withLock(code, async () => {
-    const entry = await getEntry(code);
-    entry.session.stageId = stageId;
-    touch(entry);
-    await getDriver().saveSession(entry.session);
+    const entry = await getEntryLocked(code);
+    const next: SessionMeta = {
+      ...entry.session,
+      stageId,
+      updatedAt: new Date().toISOString(),
+    };
+    const log = makeLog({ type: "stage", reason: `進入階段：${stage.label}`, operator: "主持人" });
 
-    const log = makeLog({
-      type: "stage",
-      reason: `進入階段：${stage.label}`,
-      operator: "主持人",
-    });
+    // 先確定寫進資料庫，成功後才更新快取，避免寫失敗時記憶體與試算表不一致
+    await getDriver().saveSession(next);
+    await getDriver().appendLogs(code, [log]);
+
+    entry.session = next;
     pushLog(entry, log);
-    await getDriver().appendLog(code, log);
-    return entry.session;
+    return next;
   });
 }
 
@@ -225,16 +233,21 @@ export async function setSessionStatus(
   status: SessionStatus,
 ): Promise<SessionMeta> {
   return withLock(code, async () => {
-    const entry = await getEntry(code);
-    entry.session.status = status;
-    touch(entry);
-    await getDriver().saveSession(entry.session);
-
+    const entry = await getEntryLocked(code);
+    const next: SessionMeta = {
+      ...entry.session,
+      status,
+      updatedAt: new Date().toISOString(),
+    };
     const label = status === "open" ? "重新開放" : status === "paused" ? "暫停" : "結束";
     const log = makeLog({ type: "session", reason: `場次${label}`, operator: "主持人" });
+
+    await getDriver().saveSession(next);
+    await getDriver().appendLogs(code, [log]);
+
+    entry.session = next;
     pushLog(entry, log);
-    await getDriver().appendLog(code, log);
-    return entry.session;
+    return next;
   });
 }
 
@@ -250,7 +263,7 @@ export async function joinSession(
   if (trimmed.length > 20) throw new GameError("BAD_REQUEST", "稱號請控制在 20 字以內");
 
   return withLock(code, async () => {
-    const entry = await getEntry(code);
+    const entry = await getEntryLocked(code);
     if (entry.session.status === "closed") {
       throw new GameError("SESSION_CLOSED", "本場次已結束");
     }
@@ -260,10 +273,9 @@ export async function joinSession(
       throw new GameError("JOIN_CLOSED", `目前為「${stage.label}」階段，已不開放入場`);
     }
 
-    const clash = entry.players.some(
-      (p) => p.status === "active" && p.name === trimmed,
-    );
-    if (clash) throw new GameError("NAME_TAKEN", "這個稱號已經有人用了，換一個吧");
+    if (entry.players.some((p) => p.status === "active" && p.name === trimmed)) {
+      throw new GameError("NAME_TAKEN", "這個稱號已經有人用了，換一個吧");
+    }
 
     const now = new Date().toISOString();
     const player: Player = {
@@ -277,11 +289,6 @@ export async function joinSession(
       joinedAt: now,
       updatedAt: now,
     };
-
-    await getDriver().createPlayer(code, player);
-    entry.players.push(player);
-    touch(entry);
-
     const log = makeLog({
       type: "join",
       playerId: player.id,
@@ -289,23 +296,27 @@ export async function joinSession(
       reason: "入府報到",
       operator: "系統",
     });
+
+    await getDriver().createPlayer(code, player);
+    await getDriver().appendLogs(code, [log]);
+
+    entry.players.push(player);
     pushLog(entry, log);
-    await getDriver().appendLog(code, log);
     return player;
   });
 }
 
 export async function removePlayer(code: string, playerId: string): Promise<void> {
   return withLock(code, async () => {
-    const entry = await getEntry(code);
+    const entry = await getEntryLocked(code);
     const player = entry.players.find((p) => p.id === playerId);
     if (!player) throw new GameError("PLAYER_NOT_FOUND", "找不到該玩家");
 
-    player.status = "removed";
-    player.updatedAt = new Date().toISOString();
-    await getDriver().savePlayer(code, player);
-    touch(entry);
-
+    const next: Player = {
+      ...player,
+      status: "removed",
+      updatedAt: new Date().toISOString(),
+    };
     const log = makeLog({
       type: "note",
       playerId: player.id,
@@ -313,8 +324,12 @@ export async function removePlayer(code: string, playerId: string): Promise<void
       reason: "已被移出場次",
       operator: "主持人",
     });
+
+    await getDriver().savePlayers(code, [next]);
+    await getDriver().appendLogs(code, [log]);
+
+    Object.assign(player, next);
     pushLog(entry, log);
-    await getDriver().appendLog(code, log);
   });
 }
 
@@ -340,7 +355,7 @@ export async function applyGrant(
   }
 
   return withLock(code, async () => {
-    const entry = await getEntry(code);
+    const entry = await getEntryLocked(code);
     if (entry.session.status === "closed") {
       throw new GameError("SESSION_CLOSED", "場次已結束，無法再調配資源");
     }
@@ -354,30 +369,36 @@ export async function applyGrant(
     if (targets.length === 0) throw new GameError("PLAYER_NOT_FOUND", "沒有選到任何玩家");
 
     const now = new Date().toISOString();
-    const driver = getDriver();
+    const reason = input.reason?.trim() || "主持人調配";
+    const operator = input.operator?.trim() || "主持人";
 
-    for (const player of targets) {
-      player[input.resource] += input.delta;
-      player.updatedAt = now;
+    // 先算出新狀態（不動快取），確認寫入成功後才套用
+    const updated: Player[] = targets.map((p) => {
+      const next: Player = { ...p, updatedAt: now };
+      next[input.resource] = p[input.resource] + input.delta;
+      return next;
+    });
 
-      const log = makeLog({
+    const logs = updated.map((p) =>
+      makeLog({
         type: "grant",
-        playerId: player.id,
-        playerName: player.name,
+        playerId: p.id,
+        playerName: p.name,
         resource: def.label,
         delta: input.delta,
-        balanceAfter: player[input.resource],
-        reason: input.reason?.trim() || "主持人調配",
-        operator: input.operator?.trim() || "主持人",
-      });
-      pushLog(entry, log);
+        balanceAfter: p[input.resource],
+        reason,
+        operator,
+      }),
+    );
 
-      // 逐筆寫入，避免一次爆掉 Sheets 的寫入配額
-      await driver.savePlayer(code, player);
-      await driver.appendLog(code, log);
-    }
+    // 餘額與紀錄各一次批次請求，寫在不同分頁所以能並行。
+    // 這是 20 人全體發放能維持在一秒內的關鍵（逐筆寫要十幾秒）。
+    const driver = getDriver();
+    await Promise.all([driver.savePlayers(code, updated), driver.appendLogs(code, logs)]);
 
-    touch(entry);
+    targets.forEach((p, i) => Object.assign(p, updated[i]));
+    pushLog(entry, ...logs);
     return { affected: targets.length };
   });
 }

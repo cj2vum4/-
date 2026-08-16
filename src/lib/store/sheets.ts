@@ -18,6 +18,30 @@ import {
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Google Sheets 有「每分鐘 60 次寫入 / 每使用者」的配額，
+ * 主持人連續快速操作時會撞到 429。這裡用指數退避重試，
+ * 讓短暫的尖峰自己消化掉，而不是把錯誤丟給主持人。
+ */
+async function withRetry<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
+  let delay = 600;
+  for (let i = 0; ; i++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      const e = err as { code?: number; status?: number; response?: { status?: number } };
+      const status = e?.code ?? e?.status ?? e?.response?.status;
+      const retryable = status === 429 || (typeof status === "number" && status >= 500 && status < 600);
+      if (!retryable || i >= attempts - 1) throw err;
+      // 加一點亂數，避免多個請求同時醒來又一起撞牆
+      await sleep(delay + Math.random() * 300);
+      delay *= 2;
+    }
+  }
+}
+
 /** 分頁名稱在 A1 range 中要用單引號包起來，名稱內的單引號要加倍 */
 function range(tab: string, a1: string): string {
   return `'${tab.replace(/'/g, "''")}'!${a1}`;
@@ -91,10 +115,12 @@ export class SheetsDriver implements StoreDriver {
   }
 
   private async refreshTabs(): Promise<void> {
-    const res = await this.api.spreadsheets.get({
-      spreadsheetId: this.spreadsheetId,
-      fields: "sheets.properties.title",
-    });
+    const res = await withRetry(() =>
+      this.api.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+        fields: "sheets.properties.title",
+      }),
+    );
     this.knownTabs = new Set(
       (res.data.sheets ?? [])
         .map((s) => s.properties?.title)
@@ -109,10 +135,12 @@ export class SheetsDriver implements StoreDriver {
     if (this.knownTabs.has(title)) return;
 
     try {
-      await this.api.spreadsheets.batchUpdate({
-        spreadsheetId: this.spreadsheetId,
-        requestBody: { requests: [{ addSheet: { properties: { title } } }] },
-      });
+      await withRetry(() =>
+        this.api.spreadsheets.batchUpdate({
+          spreadsheetId: this.spreadsheetId,
+          requestBody: { requests: [{ addSheet: { properties: { title } } }] },
+        }),
+      );
     } catch (err) {
       // 併發情況下可能已被其他請求建好，重新確認一次
       await this.refreshTabs();
@@ -121,12 +149,14 @@ export class SheetsDriver implements StoreDriver {
     }
 
     this.knownTabs.add(title);
-    await this.api.spreadsheets.values.update({
-      spreadsheetId: this.spreadsheetId,
-      range: range(title, "A1"),
-      valueInputOption: "RAW",
-      requestBody: { values: [headers] },
-    });
+    await withRetry(() =>
+      this.api.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: range(title, "A1"),
+        valueInputOption: "RAW",
+        requestBody: { values: [headers] },
+      }),
+    );
   }
 
   private async readRows(tab: string, lastCol: string): Promise<unknown[][]> {
@@ -134,22 +164,26 @@ export class SheetsDriver implements StoreDriver {
       await this.refreshTabs();
       if (!this.knownTabs.has(tab)) return [];
     }
-    const res = await this.api.spreadsheets.values.get({
-      spreadsheetId: this.spreadsheetId,
-      range: range(tab, `A2:${lastCol}`),
-      valueRenderOption: "UNFORMATTED_VALUE",
-    });
+    const res = await withRetry(() =>
+      this.api.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: range(tab, `A2:${lastCol}`),
+        valueRenderOption: "UNFORMATTED_VALUE",
+      }),
+    );
     return (res.data.values ?? []) as unknown[][];
   }
 
   private async appendRow(tab: string, row: (string | number)[]): Promise<void> {
-    await this.api.spreadsheets.values.append({
-      spreadsheetId: this.spreadsheetId,
-      range: range(tab, "A1"),
-      valueInputOption: "RAW",
-      insertDataOption: "INSERT_ROWS",
-      requestBody: { values: [row] },
-    });
+    await withRetry(() =>
+      this.api.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: range(tab, "A1"),
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: [row] },
+      }),
+    );
   }
 
   private async updateRow(
@@ -158,12 +192,14 @@ export class SheetsDriver implements StoreDriver {
     lastCol: string,
     row: (string | number)[],
   ): Promise<void> {
-    await this.api.spreadsheets.values.update({
-      spreadsheetId: this.spreadsheetId,
-      range: range(tab, `A${rowNumber}:${lastCol}${rowNumber}`),
-      valueInputOption: "RAW",
-      requestBody: { values: [row] },
-    });
+    await withRetry(() =>
+      this.api.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: range(tab, `A${rowNumber}:${lastCol}${rowNumber}`),
+        valueInputOption: "RAW",
+        requestBody: { values: [row] },
+      }),
+    );
   }
 
   private setRowIndex(tab: string, ids: string[]): void {
@@ -229,16 +265,37 @@ export class SheetsDriver implements StoreDriver {
     this.rowIndex.delete(tab);
   }
 
-  async savePlayer(code: string, player: Player): Promise<void> {
+  /**
+   * 一次 batchUpdate 寫回所有異動的玩家。
+   * 逐筆呼叫的話每人約 0.7 秒，全體發放給 20 人要等十幾秒；
+   * 併成一次請求後不論幾人都是一次往返。
+   */
+  async savePlayers(code: string, players: Player[]): Promise<void> {
+    if (players.length === 0) return;
     await this.init();
     const tab = playersTabName(code);
-    let row = this.rowIndex.get(tab)?.get(player.id);
-    if (!row) {
+
+    let index = this.rowIndex.get(tab);
+    if (!index || players.some((p) => !index!.has(p.id))) {
       await this.listPlayers(code);
-      row = this.rowIndex.get(tab)?.get(player.id);
+      index = this.rowIndex.get(tab);
     }
-    if (!row) throw new Error(`玩家 ${player.id} 不存在於 ${tab}`);
-    await this.updateRow(tab, row, "I", playerToRow(player));
+
+    const data = players.map((player) => {
+      const row = index?.get(player.id);
+      if (!row) throw new Error(`玩家 ${player.id} 不存在於 ${tab}`);
+      return {
+        range: range(tab, `A${row}:I${row}`),
+        values: [playerToRow(player)],
+      };
+    });
+
+    await withRetry(() =>
+      this.api.spreadsheets.values.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: { valueInputOption: "RAW", data },
+      }),
+    );
   }
 
   // ---- 紀錄 ----
@@ -252,10 +309,19 @@ export class SheetsDriver implements StoreDriver {
       .filter((e): e is LogEntry => e !== null);
   }
 
-  async appendLog(code: string, entry: LogEntry): Promise<void> {
+  async appendLogs(code: string, entries: LogEntry[]): Promise<void> {
+    if (entries.length === 0) return;
     await this.init();
     const tab = logTabName(code);
     await this.ensureTab(tab, LOG_HEADERS);
-    await this.appendRow(tab, logToRow(entry));
+    await withRetry(() =>
+      this.api.spreadsheets.values.append({
+        spreadsheetId: this.spreadsheetId,
+        range: range(tab, "A1"),
+        valueInputOption: "RAW",
+        insertDataOption: "INSERT_ROWS",
+        requestBody: { values: entries.map(logToRow) },
+      }),
+    );
   }
 }
