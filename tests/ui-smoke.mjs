@@ -98,34 +98,39 @@ try {
   await player.fill('input[inputmode="numeric"]', CODE_LOOSE);
   await player.click('button[type="submit"]');
   await player.waitForURL(`**/player/${CODE}`, { timeout: 20000 });
-  await player.waitForSelector('input[placeholder="例：六姨太"]');
-  await player.fill('input[placeholder="例：六姨太"]', "六姨太");
+  await player.waitForSelector("text=選 擇 角 色", { timeout: 20000 });
+  await player.click('button:has-text("周謙")');
   await shot(player, "4-player-join");
-  await player.click('button[type="submit"]');
-  await player.waitForSelector("text=群 芳 榜", { timeout: 20000 });
+  await player.click('button:has-text("入 府")');
+  await player.waitForSelector("text=勢 力 榜", { timeout: 20000 });
   console.log(`  PASS  玩家以「${CODE_LOOSE}」寫法入場成功`);
 
-  for (const name of ["三少爺", "帳房先生"]) {
+  for (const name of ["沈識月", "陸秉白"]) {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const pg = await newPage(ctx, name);
     await pg.goto(`${BASE}/player/${CODE}`, { waitUntil: "networkidle" });
-    await pg.fill('input[placeholder="例：六姨太"]', name);
-    await pg.click('button[type="submit"]');
-    await pg.waitForSelector("text=群 芳 榜", { timeout: 20000 });
+    await pg.waitForSelector("text=選 擇 角 色", { timeout: 20000 });
+    await pg.click(`button:has-text("${name}")`);
+    await pg.click('button:has-text("入 府")');
+    await pg.waitForSelector("text=勢 力 榜", { timeout: 20000 });
     await ctx.close();
   }
 
   // ---- 5. 主持人發放資源 ----
   await host.reload({ waitUntil: "networkidle" });
-  await host.waitForSelector("text=六姨太", { timeout: 20000 });
+  await host.waitForSelector("text=周謙", { timeout: 20000 });
+
+  // 威望值是公開數值，全體發放
+  await host.click('button:has-text("威望值")');
   await host.fill('input[placeholder^="事由"]', "完成入府考驗");
   await host.click('button:has-text("全選")');
   await host.click('button:has-text("+10")');
   await host.waitForSelector("text=/發放 10 威望/", { timeout: 20000 });
 
+  // 勢力值只有本人看得到，單獨發給周謙
   await host.click('button:has-text("勢力值")');
   await host.click('button:has-text("清除")');
-  await host.click('div[role="button"]:has-text("六姨太")');
+  await host.click('div[role="button"]:has-text("周謙")');
   await host.fill('input[placeholder^="事由"]', "結盟成功");
   await host.click('button:has-text("+5")');
   await host.waitForSelector("text=/發放 5 勢力/", { timeout: 20000 });
@@ -147,9 +152,9 @@ try {
   check("玩家看到的勢力值", /勢力值\s*(\d+)/.exec(text)?.[1], "5");
 
   // ---- 7. 階段切換同步 ----
-  await host.click('button:has-text("第一回合")');
+  await host.click('button:has-text("第一週：競選會長助理")');
   await player.waitForFunction(
-    () => document.body.innerText.includes("目前階段：第一回合"),
+    () => document.body.innerText.includes("第一週：競選會長助理"),
     { timeout: 20000 },
   );
   await shot(player, "7-player-stage", { fullPage: true });

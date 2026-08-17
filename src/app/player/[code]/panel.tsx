@@ -7,14 +7,13 @@ import {
   BackLink,
   Button,
   CodeStamp,
-  Field,
   Notice,
   PageShell,
   Panel,
   PanelTitle,
   StatusPill,
 } from "@/components/ui";
-import { RESOURCES, STAGE_MAP } from "@/lib/config";
+import { RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
 import {
   ApiError,
   api,
@@ -23,8 +22,14 @@ import {
   savePlayerIdentity,
   type PlayerIdentity,
 } from "@/lib/client";
-import { rankPlayers, useSessionState } from "@/lib/use-session-state";
-import type { Player } from "@/lib/types";
+import { usePlayerState } from "@/lib/use-session-state";
+
+interface CharacterOption {
+  id: string;
+  name: string;
+  difficulty: string;
+  taken: boolean;
+}
 
 export function PlayerPanel({ code }: { code: string }) {
   /** undefined = 還在讀 localStorage */
@@ -41,59 +46,64 @@ export function PlayerPanel({ code }: { code: string }) {
       </PageShell>
     );
   }
-
-  if (me === null) {
-    return <JoinForm code={code} onJoined={setMe} />;
-  }
-
+  if (me === null) return <CharacterPicker code={code} onJoined={setMe} />;
   return <LiveBoard code={code} me={me} onReset={() => setMe(null)} />;
 }
 
-function JoinForm({
+function CharacterPicker({
   code,
   onJoined,
 }: {
   code: string;
   onJoined: (p: PlayerIdentity) => void;
 }) {
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [characters, setCharacters] = useState<CharacterOption[] | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    api<{ session: { title: string } }>(`/api/sessions/${code}`)
-      .then((d) => alive && setSessionTitle(d.session.title))
-      .catch((err) => {
-        if (alive && err instanceof ApiError && err.code === "SESSION_NOT_FOUND") {
-          setMissing(true);
-        }
-      });
+    const load = () =>
+      api<{ session: { title: string }; characters: CharacterOption[] }>(
+        `/api/sessions/${code}`,
+      )
+        .then((d) => {
+          if (!alive) return;
+          setSessionTitle(d.session.title);
+          setCharacters(d.characters);
+        })
+        .catch((err) => {
+          if (alive && err instanceof ApiError && err.code === "SESSION_NOT_FOUND") {
+            setMissing(true);
+          }
+        });
+
+    void load();
+    // 有人選走角色時要即時反映，避免兩人搶同一位
+    const timer = setInterval(load, 4000);
     return () => {
       alive = false;
+      clearInterval(timer);
     };
   }, [code]);
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function join() {
+    if (!picked) return;
     setBusy(true);
     setError(null);
     try {
-      const data = await api<{ player: Player }>(`/api/sessions/${code}/join`, {
+      const data = await api<{ player: PlayerIdentity }>(`/api/sessions/${code}/join`, {
         method: "POST",
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ characterId: picked }),
       });
-      const identity: PlayerIdentity = {
-        id: data.player.id,
-        name: data.player.name,
-        joinCode: data.player.joinCode,
-      };
-      savePlayerIdentity(code, identity);
-      onJoined(identity);
+      savePlayerIdentity(code, data.player);
+      onJoined(data.player);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "入場失敗");
+      setPicked(null);
     } finally {
       setBusy(false);
     }
@@ -114,31 +124,66 @@ function JoinForm({
     <PageShell>
       <BackLink href="/player" label="換一個場次" />
 
-      <header className="mt-6 mb-6">
+      <header className="mt-6 mb-5">
         <p className="text-xs tracking-[0.3em] text-muted">即將入府</p>
         <h1 className="mt-2 flex flex-wrap items-center gap-2 text-2xl font-bold text-paper">
           {sessionTitle ?? code}
           <CodeStamp code={code} />
         </h1>
-        <p className="mt-2 text-sm text-muted">請留下你在九爺府中的稱號。</p>
+        <p className="mt-2 text-sm text-muted">請選擇你要扮演的角色。</p>
       </header>
 
       <Panel>
-        <form onSubmit={submit} className="space-y-4">
-          <Field
-            label="你的稱號"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="例：六姨太"
-            maxLength={20}
-            autoComplete="off"
-            autoFocus
-          />
-          {error ? <Notice>{error}</Notice> : null}
-          <Button type="submit" disabled={busy || !name.trim()} className="w-full">
-            {busy ? "入場中…" : "入 府"}
-          </Button>
-        </form>
+        <PanelTitle>選 擇 角 色</PanelTitle>
+        {characters === null ? (
+          <p className="py-6 text-center text-sm text-muted">載入角色中…</p>
+        ) : (
+          <ul className="space-y-2">
+            {characters.map((c) => {
+              const on = picked === c.id;
+              return (
+                <li key={c.id}>
+                  <button
+                    type="button"
+                    disabled={c.taken || busy}
+                    onClick={() => setPicked(c.id)}
+                    className={`flex w-full items-center gap-3 rounded-lg border px-3.5 py-3 text-left transition-colors ${
+                      c.taken
+                        ? "cursor-not-allowed border-line/50 bg-panel-2/30 opacity-45"
+                        : on
+                          ? "border-gold bg-gold/12"
+                          : "border-line bg-panel-2/60 hover:border-gold/50"
+                    }`}
+                  >
+                    <span
+                      className={`text-base font-bold ${on ? "text-gold-soft" : "text-paper"}`}
+                    >
+                      {c.name}
+                    </span>
+                    <span className="text-xs text-muted">難度 {c.difficulty}</span>
+                    <span className="ml-auto text-xs">
+                      {c.taken ? (
+                        <span className="text-muted/60">已被選走</span>
+                      ) : on ? (
+                        <span className="text-gold">已選擇</span>
+                      ) : null}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {error ? (
+          <div className="mt-4">
+            <Notice>{error}</Notice>
+          </div>
+        ) : null}
+
+        <Button onClick={join} disabled={!picked || busy} className="mt-4 w-full">
+          {busy ? "入場中…" : "入 府"}
+        </Button>
       </Panel>
     </PageShell>
   );
@@ -153,17 +198,20 @@ function LiveBoard({
   me: PlayerIdentity;
   onReset: () => void;
 }) {
-  const { snapshot, error, loading } = useSessionState(code, { intervalMs: 3000 });
+  const { snapshot, error, loading } = usePlayerState(code, me);
 
-  const ranked = useMemo(() => rankPlayers(snapshot?.players ?? []), [snapshot]);
-  const myIndex = ranked.findIndex((p) => p.id === me.id);
-  const mine = myIndex >= 0 ? ranked[myIndex] : null;
   const session = snapshot?.session;
   const stage = session ? STAGE_MAP[session.stageId] : undefined;
+  const mine = snapshot?.me;
 
-  const myLog = useMemo(
-    () => (snapshot?.log ?? []).filter((e) => e.playerId === me.id || e.playerId === ""),
-    [snapshot, me.id],
+  /** 威望值公開，可以直接排；勢力值只拿得到名次 */
+  const prestigeBoard = useMemo(
+    () => [...(snapshot?.players ?? [])].sort((a, b) => b.prestige - a.prestige),
+    [snapshot],
+  );
+  const powerBoard = useMemo(
+    () => [...(snapshot?.players ?? [])].sort((a, b) => a.powerRank - b.powerRank),
+    [snapshot],
   );
 
   if (loading && !snapshot) {
@@ -185,8 +233,7 @@ function LiveBoard({
     );
   }
 
-  // 主持人把玩家移出，或換了裝置／清了資料
-  if (snapshot && !mine) {
+  if (error?.code === "PLAYER_NOT_FOUND" || (snapshot && !mine)) {
     return (
       <PageShell>
         <BackLink href="/player" label="重新輸入場次" />
@@ -207,6 +254,9 @@ function LiveBoard({
     );
   }
 
+  if (!mine) return null;
+  const showHp = stage?.id === "gunfight" || mine.hp > 0;
+
   return (
     <PageShell>
       <div className="flex items-center justify-between gap-3">
@@ -218,32 +268,81 @@ function LiveBoard({
         <div className="flex flex-wrap items-center gap-2">
           <CodeStamp code={code} />
           {session ? <StatusPill status={session.status} /> : null}
+          {session?.recruitOpen ? (
+            <span className="rounded-full border border-jade/50 bg-jade/10 px-2.5 py-0.5 text-xs text-jade-soft">
+              招募開放中
+            </span>
+          ) : null}
         </div>
-        <h1 className="mt-3 text-2xl font-bold text-paper">{mine?.name}</h1>
+        <h1 className="mt-3 text-2xl font-bold text-paper">{mine.name}</h1>
         <p className="mt-1 text-sm text-gold-soft">
-          目前階段：{stage?.label ?? session?.stageId}
+          {stage ? `第 ${stage.index} 階段・${stage.label}` : session?.stageId}
           {stage?.hint ? <span className="text-muted/70">　{stage.hint}</span> : null}
         </p>
       </header>
 
-      <div className="grid grid-cols-2 gap-3">
-        {RESOURCES.map((r) => (
-          <ResourceStat key={r.key} def={r} value={mine?.[r.key] ?? 0} size="lg" />
-        ))}
+      <div className={`grid gap-3 ${showHp ? "grid-cols-3" : "grid-cols-2"}`}>
+        <ResourceStat def={RESOURCE_MAP.power} value={mine.power} size="lg" />
+        <ResourceStat def={RESOURCE_MAP.prestige} value={mine.prestige} size="lg" />
+        {showHp ? <ResourceStat def={RESOURCE_MAP.hp} value={mine.hp} size="lg" /> : null}
       </div>
 
       <p className="mt-3 text-center text-sm text-muted">
-        目前排名　
-        <b className="tabular text-xl text-paper">{myIndex + 1}</b>
-        <span className="text-muted/60"> / {ranked.length}</span>
+        勢力排名　
+        <b className="tabular text-xl text-paper">{mine.powerRank}</b>
+        <span className="text-muted/60"> / {powerBoard.length}</span>
+        {mine.drawsRemaining > 0 ? (
+          <span className="ml-3 text-jade-soft">剩餘抽取 {mine.drawsRemaining} 次</span>
+        ) : null}
       </p>
 
       <div className="mt-5 space-y-4">
         <Panel>
-          <PanelTitle>群 芳 榜</PanelTitle>
+          <PanelTitle extra={<span className="text-xs text-muted/70">只顯示名次</span>}>
+            勢 力 榜
+          </PanelTitle>
           <ul className="space-y-1.5">
-            {ranked.map((p, i) => {
-              const isMe = p.id === me.id;
+            {powerBoard.map((p) => {
+              const isMe = p.id === mine.id;
+              return (
+                <li
+                  key={p.id}
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
+                    isMe ? "border-jade/60 bg-jade/10" : "border-transparent bg-panel-2/50"
+                  }`}
+                >
+                  <span
+                    className={`tabular w-5 shrink-0 text-sm ${p.powerRank <= 3 ? "text-jade-soft" : "text-muted"}`}
+                  >
+                    {p.powerRank}
+                  </span>
+                  <span
+                    className={`min-w-0 flex-1 truncate text-sm ${isMe ? "font-bold text-paper" : "text-paper/80"}`}
+                  >
+                    {p.name}
+                    {isMe ? <span className="ml-1.5 text-xs text-jade">（你）</span> : null}
+                  </span>
+                  <span className="tabular shrink-0 text-sm">
+                    {isMe ? (
+                      <span className="text-jade-soft">{mine.power}</span>
+                    ) : (
+                      <span className="text-muted/40">???</span>
+                    )}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-3 text-xs leading-relaxed text-muted/60">
+            勢力值只有本人看得到數字，其他人僅能看到名次。
+          </p>
+        </Panel>
+
+        <Panel>
+          <PanelTitle>威 望 榜</PanelTitle>
+          <ul className="space-y-1.5">
+            {prestigeBoard.map((p, i) => {
+              const isMe = p.id === mine.id;
               return (
                 <li
                   key={p.id}
@@ -263,9 +362,6 @@ function LiveBoard({
                     {isMe ? <span className="ml-1.5 text-xs text-gold">（你）</span> : null}
                   </span>
                   <span className="tabular shrink-0 text-sm text-gold-soft">{p.prestige}</span>
-                  <span className="shrink-0 text-xs text-muted/50">威</span>
-                  <span className="tabular shrink-0 text-sm text-jade-soft">{p.influence}</span>
-                  <span className="shrink-0 text-xs text-muted/50">勢</span>
                 </li>
               );
             })}
@@ -275,7 +371,7 @@ function LiveBoard({
         <Panel>
           <PanelTitle>我 的 動 態</PanelTitle>
           <div className="max-h-80 overflow-y-auto">
-            <LogFeed log={myLog} empty="還沒有你的紀錄，靜候九爺差遣" />
+            <LogFeed log={snapshot?.log ?? []} empty="還沒有你的紀錄，靜候九爺差遣" />
           </div>
         </Panel>
       </div>
@@ -284,7 +380,7 @@ function LiveBoard({
         <button
           type="button"
           onClick={() => {
-            if (!confirm("要離開這個身分、重新入場嗎？原本的資料仍保留在紀錄中。")) return;
+            if (!confirm("要離開這個身分、重新選角嗎？原本的資料仍保留在紀錄中。")) return;
             clearPlayerIdentity(code);
             onReset();
           }}

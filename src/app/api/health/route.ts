@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { diagnoseCredentials } from "@/lib/store/credentials";
+import { schemaMismatchTabs } from "@/lib/store/sheets";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,14 @@ export async function GET() {
     if (!cred.source) problems.push("缺少服務帳號憑證");
     else if (!cred.ok) problems.push(cred.error ?? "服務帳號憑證格式有問題");
 
+    // 欄位定義改版後若有舊分頁沒遷移，資料會錯位，這裡要讓人看得到
+    const staleTabs = schemaMismatchTabs();
+    if (staleTabs.length > 0) {
+      problems.push(
+        `以下分頁的表頭是舊版且已有資料，需人工遷移或刪除：${staleTabs.join("、")}`,
+      );
+    }
+
     const usingSheets = Boolean(spreadsheetId) && cred.ok;
 
     return NextResponse.json(
@@ -43,6 +52,7 @@ export async function GET() {
           // 解析失敗時描述值的外觀（長度、開頭字元），不含任何金鑰內容
           shape: cred.shape ?? null,
         },
+        staleTabs,
         problems,
         hint: usingSheets
           ? "已連上 Google Sheet。"

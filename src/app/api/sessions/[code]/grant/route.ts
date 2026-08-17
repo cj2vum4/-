@@ -1,4 +1,5 @@
 import { handle, hostPin, jsonOk, readJson, requireCode } from "@/lib/api-helpers";
+import type { LedgerSource } from "@/lib/config";
 import { applyGrant, assertHost } from "@/lib/game";
 import type { ResourceKey } from "@/lib/types";
 
@@ -8,11 +9,12 @@ interface GrantBody {
   playerIds?: string[] | "ALL";
   resource?: ResourceKey;
   delta?: number;
+  source?: LedgerSource;
   reason?: string;
   operator?: string;
 }
 
-/** 主持人發放／扣除 威望值 或 勢力值，支援一次選多人或全體 */
+/** 主持人調配勢力值／威望值／血量，支援一次選多人或全體 */
 export async function POST(req: Request, ctx: { params: Promise<{ code: string }> }) {
   return handle(async () => {
     const { code: raw } = await ctx.params;
@@ -22,8 +24,9 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const body = await readJson<GrantBody>(req);
     const result = await applyGrant(code, {
       playerIds: body.playerIds ?? [],
-      resource: (body.resource ?? "prestige") as ResourceKey,
+      resource: (body.resource ?? "power") as ResourceKey,
       delta: Number(body.delta),
+      source: body.source,
       reason: body.reason,
       operator: body.operator,
     });

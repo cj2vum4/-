@@ -14,9 +14,18 @@ import {
   PanelTitle,
   StatusPill,
 } from "@/components/ui";
-import { QUICK_DELTAS, RESOURCES, STAGES, STAGE_MAP } from "@/lib/config";
+import { CHARACTER_MAP, FACTIONS, HIDDEN_BRANCHES, type Faction } from "@/lib/characters";
+import {
+  LEDGER_SOURCES,
+  PLAYER_COUNT_HINT,
+  QUICK_DELTAS,
+  RESOURCES,
+  STAGES,
+  STAGE_MAP,
+  type LedgerSource,
+} from "@/lib/config";
 import { ApiError, api, clearHostPin, loadHostPin, saveHostPin } from "@/lib/client";
-import { rankPlayers, useSessionState } from "@/lib/use-session-state";
+import { rankByPower, useHostState } from "@/lib/use-session-state";
 import type { ResourceKey } from "@/lib/types";
 
 export function HostConsole({ code }: { code: string }) {
@@ -34,11 +43,7 @@ export function HostConsole({ code }: { code: string }) {
       </PageShell>
     );
   }
-
-  if (pin === "") {
-    return <PinGate code={code} onPass={setPin} />;
-  }
-
+  if (pin === "") return <PinGate code={code} onPass={setPin} />;
   return <Console code={code} pin={pin} onPinRejected={() => setPin("")} />;
 }
 
@@ -102,20 +107,20 @@ function Console({
   pin: string;
   onPinRejected: () => void;
 }) {
-  const { snapshot, error, loading, refresh } = useSessionState(code, { intervalMs: 2500 });
+  const { snapshot, error, loading, refresh } = useHostState(code, pin);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [resource, setResource] = useState<ResourceKey>("prestige");
+  const [resource, setResource] = useState<ResourceKey>("power");
+  const [source, setSource] = useState<LedgerSource>("主持人手動發放");
   const [reason, setReason] = useState("");
   const [custom, setCustom] = useState("");
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const players = useMemo(() => rankPlayers(snapshot?.players ?? []), [snapshot]);
+  const players = useMemo(() => rankByPower(snapshot?.players ?? []), [snapshot]);
   const session = snapshot?.session;
   const stage = session ? STAGE_MAP[session.stageId] : undefined;
   const resourceDef = RESOURCES.find((r) => r.key === resource)!;
 
-  // 玩家離場後，把已被移除的 id 從選取清單清掉
   useEffect(() => {
     setSelected((prev) => {
       const alive = new Set(players.map((p) => p.id));
@@ -126,7 +131,7 @@ function Console({
 
   const flash = useCallback((kind: "success" | "error", text: string) => {
     setToast({ kind, text });
-    setTimeout(() => setToast(null), 2600);
+    setTimeout(() => setToast(null), 2800);
   }, []);
 
   const handleError = useCallback(
@@ -155,6 +160,7 @@ function Console({
           playerIds: targetAll ? "ALL" : [...selected],
           resource,
           delta,
+          source,
           reason,
         }),
       });
@@ -171,34 +177,18 @@ function Console({
     }
   }
 
-  async function jumpStage(stageId: string) {
+  async function post(path: string, body: unknown, okText: string, fallback: string) {
     setBusy(true);
     try {
-      await api(`/api/sessions/${code}/stage`, {
+      await api(`/api/sessions/${code}${path}`, {
         method: "POST",
         hostPin: pin,
-        body: JSON.stringify({ stageId }),
+        body: JSON.stringify(body),
       });
+      if (okText) flash("success", okText);
       await refresh();
     } catch (err) {
-      handleError(err, "切換階段失敗");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function changeStatus(status: "open" | "paused" | "closed") {
-    if (status === "closed" && !confirm("確定要結束本場次嗎？結束後就不能再調配資源。")) return;
-    setBusy(true);
-    try {
-      await api(`/api/sessions/${code}/status`, {
-        method: "POST",
-        hostPin: pin,
-        body: JSON.stringify({ status }),
-      });
-      await refresh();
-    } catch (err) {
-      handleError(err, "更新場次狀態失敗");
+      handleError(err, fallback);
     } finally {
       setBusy(false);
     }
@@ -207,10 +197,7 @@ function Console({
   async function kick(playerId: string, name: string) {
     if (!confirm(`確定把「${name}」移出場次嗎？`)) return;
     try {
-      await api(`/api/sessions/${code}/players/${playerId}`, {
-        method: "DELETE",
-        hostPin: pin,
-      });
+      await api(`/api/sessions/${code}/players/${playerId}`, { method: "DELETE", hostPin: pin });
       await refresh();
     } catch (err) {
       handleError(err, "移除玩家失敗");
@@ -247,7 +234,14 @@ function Console({
         <h1 className="text-xl font-bold text-paper">{session?.title}</h1>
         <CodeStamp code={code} />
         {session ? <StatusPill status={session.status} /> : null}
-        <span className="text-sm text-gold-soft">{stage?.label}</span>
+        <span className="text-sm text-gold-soft">
+          {stage ? `第 ${stage.index} 階段・${stage.label}` : session?.stageId}
+        </span>
+        {session?.recruitOpen ? (
+          <span className="rounded-full border border-jade/50 bg-jade/10 px-2.5 py-0.5 text-xs text-jade-soft">
+            招募開放中
+          </span>
+        ) : null}
       </header>
 
       {toast ? (
@@ -256,7 +250,7 @@ function Console({
         </div>
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
+      <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
         <div className="space-y-4">
           {/* ---- 資源調配 ---- */}
           <Panel>
@@ -267,7 +261,7 @@ function Console({
                 </span>
               }
             >
-              調 配 資 源
+              調 配 數 值
             </PanelTitle>
 
             <div className="mb-3 flex gap-2">
@@ -280,44 +274,48 @@ function Console({
                     resource === r.key
                       ? r.key === "prestige"
                         ? "border-gold bg-gold/15 text-gold-soft"
-                        : "border-jade bg-jade/15 text-jade-soft"
+                        : r.key === "power"
+                          ? "border-jade bg-jade/15 text-jade-soft"
+                          : "border-vermilion bg-vermilion/15 text-vermilion-soft"
                       : "border-line bg-panel-2 text-muted hover:text-paper"
                   }`}
                 >
                   {r.label}
+                  <span className="ml-1.5 text-[10px] font-normal opacity-70">
+                    {r.visibility === "public" ? "公開" : "僅本人"}
+                  </span>
                 </button>
               ))}
             </div>
 
-            <input
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              placeholder="事由（選填，會寫進紀錄）例：完成第一關任務"
-              className="mb-3 w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
-            />
+            <div className="mb-3 grid gap-2 sm:grid-cols-[190px_1fr]">
+              <select
+                value={source}
+                onChange={(e) => setSource(e.target.value as LedgerSource)}
+                className="rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
+              >
+                {LEDGER_SOURCES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                placeholder="事由（選填，會寫進紀錄）"
+                className="min-w-0 rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
+              />
+            </div>
 
             <div className="grid grid-cols-5 gap-2">
               {QUICK_DELTAS.map((d) => (
-                <Button
-                  key={`plus-${d}`}
-                  size="sm"
-                  variant="jade"
-                  disabled={busy}
-                  onClick={() => grant(d)}
-                  className="py-2.5"
-                >
+                <Button key={`p${d}`} size="sm" variant="jade" disabled={busy} onClick={() => grant(d)} className="py-2.5">
                   +{d}
                 </Button>
               ))}
               {QUICK_DELTAS.map((d) => (
-                <Button
-                  key={`minus-${d}`}
-                  size="sm"
-                  variant="danger"
-                  disabled={busy}
-                  onClick={() => grant(-d)}
-                  className="py-2.5"
-                >
+                <Button key={`m${d}`} size="sm" variant="danger" disabled={busy} onClick={() => grant(-d)} className="py-2.5">
                   −{d}
                 </Button>
               ))}
@@ -337,10 +335,7 @@ function Console({
                 disabled={busy || !custom.trim()}
                 onClick={() => {
                   const n = Number(custom);
-                  if (!Number.isFinite(n) || n === 0) {
-                    flash("error", "請輸入不為零的數字");
-                    return;
-                  }
+                  if (!Number.isFinite(n) || n === 0) return flash("error", "請輸入不為零的數字");
                   void grant(n);
                 }}
                 className="shrink-0 px-4"
@@ -353,10 +348,7 @@ function Console({
                 disabled={busy || players.length === 0}
                 onClick={() => {
                   const n = Number(custom || "0");
-                  if (!Number.isFinite(n) || n === 0) {
-                    flash("error", "全體發放請先填自訂數值");
-                    return;
-                  }
+                  if (!Number.isFinite(n) || n === 0) return flash("error", "全體發放請先填自訂數值");
                   void grant(n, true);
                 }}
                 className="shrink-0 px-4"
@@ -371,11 +363,7 @@ function Console({
             <PanelTitle
               extra={
                 <span className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => setSelected(new Set(players.map((p) => p.id)))}
-                  >
+                  <Button size="sm" variant="ghost" onClick={() => setSelected(new Set(players.map((p) => p.id)))}>
                     全選
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
@@ -391,40 +379,42 @@ function Console({
               <div className="py-8 text-center">
                 <p className="text-sm text-muted">還沒有玩家入場</p>
                 <p className="mt-2 text-xs text-muted/70">
-                  請玩家開啟本站 →「我是玩家」→ 輸入場次 <b className="text-gold-soft">{code}</b>
+                  請玩家開啟本站 →「我是玩家」→ 輸入場次{" "}
+                  <b className="text-gold-soft">{code}</b> → 選角
                 </p>
+                <p className="mt-1 text-xs text-muted/50">{PLAYER_COUNT_HINT}</p>
               </div>
             ) : (
               <ul className="space-y-2">
                 {players.map((p, i) => {
                   const on = selected.has(p.id);
+                  const character = CHARACTER_MAP[p.characterId];
+                  const toggle = () =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(p.id)) next.delete(p.id);
+                      else next.add(p.id);
+                      return next;
+                    });
+
                   return (
-                    <li key={p.id}>
+                    <li
+                      key={p.id}
+                      className={`rounded-lg border px-3 py-2.5 transition-colors ${
+                        on ? "border-gold/70 bg-gold/10" : "border-line bg-panel-2/60"
+                      }`}
+                    >
                       <div
                         role="button"
                         tabIndex={0}
-                        onClick={() =>
-                          setSelected((prev) => {
-                            const next = new Set(prev);
-                            next.has(p.id) ? next.delete(p.id) : next.add(p.id);
-                            return next;
-                          })
-                        }
+                        onClick={toggle}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" || e.key === " ") {
                             e.preventDefault();
-                            setSelected((prev) => {
-                              const next = new Set(prev);
-                              next.has(p.id) ? next.delete(p.id) : next.add(p.id);
-                              return next;
-                            });
+                            toggle();
                           }
                         }}
-                        className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2.5 transition-colors ${
-                          on
-                            ? "border-gold/70 bg-gold/10"
-                            : "border-line bg-panel-2/60 hover:border-line/80"
-                        }`}
+                        className="flex cursor-pointer items-center gap-3"
                       >
                         <span
                           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border text-[11px] ${
@@ -433,20 +423,19 @@ function Console({
                         >
                           ✓
                         </span>
-                        <span className="tabular w-6 shrink-0 text-xs text-muted">
-                          {i + 1}
-                        </span>
+                        <span className="tabular w-5 shrink-0 text-xs text-muted">{i + 1}</span>
                         <span className="min-w-0 flex-1 truncate text-sm font-bold text-paper">
                           {p.name}
+                          <span className="ml-1.5 text-[10px] font-normal text-muted/60">
+                            {character?.difficulty}
+                          </span>
                         </span>
-                        <span className="tabular shrink-0 text-sm text-gold-soft">
-                          {p.prestige}
-                        </span>
-                        <span className="shrink-0 text-xs text-muted/50">威</span>
-                        <span className="tabular shrink-0 text-sm text-jade-soft">
-                          {p.influence}
-                        </span>
+                        <span className="tabular shrink-0 text-sm text-jade-soft">{p.power}</span>
                         <span className="shrink-0 text-xs text-muted/50">勢</span>
+                        <span className="tabular shrink-0 text-sm text-gold-soft">{p.prestige}</span>
+                        <span className="shrink-0 text-xs text-muted/50">威</span>
+                        <span className="tabular shrink-0 text-sm text-vermilion-soft">{p.hp}</span>
+                        <span className="shrink-0 text-xs text-muted/50">血</span>
                         <button
                           type="button"
                           onClick={(e) => {
@@ -459,6 +448,69 @@ function Console({
                           ✕
                         </button>
                       </div>
+
+                      {/* 機密設定：陣營與隱藏分支，只有主持人看得到 */}
+                      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line/50 pt-2">
+                        <span className="text-[10px] tracking-widest text-muted/60">陣營</span>
+                        <select
+                          value={p.faction}
+                          disabled={busy}
+                          onChange={(e) =>
+                            post(
+                              `/players/${p.id}/faction`,
+                              { faction: e.target.value as Faction | "" },
+                              `${p.name} 陣營已設定`,
+                              "設定陣營失敗",
+                            )
+                          }
+                          className="rounded border border-line bg-lacquer px-2 py-1 text-xs text-paper outline-none focus:border-gold/70"
+                        >
+                          <option value="">未設定</option>
+                          {FACTIONS.map((f) => (
+                            <option key={f} value={f}>
+                              {f}
+                            </option>
+                          ))}
+                        </select>
+
+                        {character?.hasHiddenBranch ? (
+                          <>
+                            <span className="ml-2 text-[10px] tracking-widest text-muted/60">
+                              隱藏分支
+                            </span>
+                            {p.hiddenBranchLocked ? (
+                              <span className="rounded border border-vermilion/40 bg-vermilion/10 px-2 py-1 text-xs text-vermilion-soft">
+                                {p.hiddenBranch}（已鎖定，不可更改）
+                              </span>
+                            ) : (
+                              HIDDEN_BRANCHES.map((b) => (
+                                <Button
+                                  key={b}
+                                  size="sm"
+                                  variant="ghost"
+                                  disabled={busy}
+                                  onClick={() => {
+                                    if (
+                                      !confirm(
+                                        `將 ${p.name} 的隱藏分支鎖定為「${b}」？依規則設定後不可更改。`,
+                                      )
+                                    )
+                                      return;
+                                    void post(
+                                      `/players/${p.id}/branch`,
+                                      { branch: b },
+                                      `${p.name} 隱藏分支鎖定為「${b}」`,
+                                      "設定隱藏分支失敗",
+                                    );
+                                  }}
+                                >
+                                  {b}
+                                </Button>
+                              ))
+                            )}
+                          </>
+                        ) : null}
+                      </div>
                     </li>
                   );
                 })}
@@ -467,7 +519,7 @@ function Console({
           </Panel>
         </div>
 
-        {/* ---- 右欄：階段 / 場次 / 紀錄 ---- */}
+        {/* ---- 右欄 ---- */}
         <div className="space-y-4">
           <Panel>
             <PanelTitle>遊 戲 階 段</PanelTitle>
@@ -479,22 +531,16 @@ function Console({
                     <button
                       type="button"
                       disabled={busy}
-                      onClick={() => jumpStage(s.id)}
+                      onClick={() => post("/stage", { stageId: s.id }, "", "切換階段失敗")}
                       className={`w-full rounded-lg border px-3 py-2 text-left transition-colors disabled:opacity-50 ${
-                        active
-                          ? "border-gold bg-gold/12"
-                          : "border-line bg-panel-2/60 hover:border-gold/50"
+                        active ? "border-gold bg-gold/12" : "border-line bg-panel-2/60 hover:border-gold/50"
                       }`}
                     >
-                      <span
-                        className={`text-sm font-bold ${active ? "text-gold-soft" : "text-paper/85"}`}
-                      >
+                      <span className="tabular mr-1.5 text-xs text-muted/60">{s.index}</span>
+                      <span className={`text-sm font-bold ${active ? "text-gold-soft" : "text-paper/85"}`}>
                         {s.label}
                       </span>
-                      <span className="ml-2 text-xs text-muted/70">{s.hint}</span>
-                      {s.allowJoin ? (
-                        <span className="ml-2 text-[10px] text-jade-soft">可入場</span>
-                      ) : null}
+                      <span className="mt-0.5 block text-xs text-muted/70">{s.hint}</span>
                     </button>
                   </li>
                 );
@@ -503,36 +549,64 @@ function Console({
           </Panel>
 
           <Panel>
+            <PanelTitle>勢 力 招 募</PanelTitle>
+            {stage?.hasRecruit ? (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    variant="jade"
+                    disabled={busy || session?.recruitOpen}
+                    onClick={() => post("/recruit", { open: true }, "招募已開啟", "開啟招募失敗")}
+                  >
+                    開啟招募
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy || !session?.recruitOpen}
+                    onClick={() => post("/recruit", { open: false }, "招募已鎖定", "鎖定招募失敗")}
+                  >
+                    鎖定招募
+                  </Button>
+                </div>
+                <p className="mt-2.5 text-xs leading-relaxed text-muted/70">
+                  目前狀態：
+                  {session?.recruitOpen ? (
+                    <b className="text-jade-soft">開放中</b>
+                  ) : (
+                    <b className="text-muted">已鎖定</b>
+                  )}
+                </p>
+              </>
+            ) : (
+              <p className="text-xs leading-relaxed text-muted/70">
+                「{stage?.label}」沒有勢力招募。招募只在第一～三週開放。
+              </p>
+            )}
+          </Panel>
+
+          <Panel>
             <PanelTitle>場 次 控 制</PanelTitle>
             <div className="grid grid-cols-3 gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy || session?.status === "open"}
-                onClick={() => changeStatus("open")}
-              >
-                開放
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy || session?.status === "paused"}
-                onClick={() => changeStatus("paused")}
-              >
-                暫停
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={busy || session?.status === "closed"}
-                onClick={() => changeStatus("closed")}
-              >
-                結束
-              </Button>
+              {(["open", "paused", "closed"] as const).map((st) => (
+                <Button
+                  key={st}
+                  size="sm"
+                  variant={st === "closed" ? "danger" : "ghost"}
+                  disabled={busy || session?.status === st}
+                  onClick={() => {
+                    if (st === "closed" && !confirm("確定要結束本場次嗎？結束後就不能再調配數值。"))
+                      return;
+                    void post("/status", { status: st }, "", "更新場次狀態失敗");
+                  }}
+                >
+                  {st === "open" ? "開放" : st === "paused" ? "暫停" : "結束"}
+                </Button>
+              ))}
             </div>
             <p className="mt-3 text-xs leading-relaxed text-muted/70">
-              玩家入場網址：本站首頁 →「我是玩家」→ 輸入{" "}
-              <b className="text-gold-soft">{code}</b>
+              玩家入場：本站首頁 →「我是玩家」→ 輸入 <b className="text-gold-soft">{code}</b>
             </p>
             <Link
               href={`/player/${code}`}
@@ -546,7 +620,7 @@ function Console({
           <Panel>
             <PanelTitle>最 新 紀 錄</PanelTitle>
             <div className="max-h-96 overflow-y-auto">
-              <LogFeed log={snapshot?.log ?? []} />
+              <LogFeed log={snapshot?.log ?? []} showSource />
             </div>
           </Panel>
         </div>

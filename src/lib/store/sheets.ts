@@ -3,8 +3,11 @@ import { readCredentials } from "./credentials";
 import type { LogEntry, Player, SessionMeta } from "../types";
 import {
   LOG_HEADERS,
+  LOG_LAST_COL,
   PLAYER_HEADERS,
+  PLAYER_LAST_COL,
   SESSION_HEADERS,
+  SESSION_LAST_COL,
   logTabName,
   logToRow,
   playerToRow,
@@ -18,6 +21,13 @@ import {
 } from "./driver";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
+
+/** 表頭與目前定義不符、且已有資料的分頁。由 /api/health 回報給操作者。 */
+const schemaWarnings = new Set<string>();
+
+export function schemaMismatchTabs(): string[] {
+  return [...schemaWarnings];
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -41,6 +51,11 @@ async function withRetry<T>(fn: () => Promise<T>, attempts = 5): Promise<T> {
       delay *= 2;
     }
   }
+}
+
+/** 1 -> A, 2 -> B … 目前欄數都在 Z 以內 */
+function colLetter(count: number): string {
+  return String.fromCharCode("A".charCodeAt(0) + count - 1);
 }
 
 /** 分頁名稱在 A1 range 中要用單引號包起來，名稱內的單引號要加倍 */
@@ -81,6 +96,8 @@ export class SheetsDriver implements StoreDriver {
   private initPromise: Promise<void> | null = null;
   /** 已知存在的分頁名稱，避免每次都打 spreadsheets.get */
   private knownTabs = new Set<string>();
+  /** 這次程序啟動後已檢查過表頭的分頁，避免重複檢查 */
+  private headerChecked = new Set<string>();
   /** id -> 試算表列號（1-based），savePlayer/saveSession 用來定位 */
   private rowIndex = new Map<string, Map<string, number>>();
 
@@ -120,11 +137,20 @@ export class SheetsDriver implements StoreDriver {
     );
   }
 
-  /** 分頁不存在就建立，並寫入表頭 */
+  /**
+   * 分頁不存在就建立並寫入表頭；已存在則檢查表頭是否為最新版。
+   * 欄位定義改版時，舊分頁的表頭若不修好，寫入的資料會整排錯位。
+   */
   private async ensureTab(title: string, headers: string[]): Promise<void> {
-    if (this.knownTabs.has(title)) return;
+    if (this.knownTabs.has(title)) {
+      await this.ensureHeaders(title, headers);
+      return;
+    }
     await this.refreshTabs();
-    if (this.knownTabs.has(title)) return;
+    if (this.knownTabs.has(title)) {
+      await this.ensureHeaders(title, headers);
+      return;
+    }
 
     try {
       await withRetry(() =>
@@ -141,6 +167,52 @@ export class SheetsDriver implements StoreDriver {
     }
 
     this.knownTabs.add(title);
+    await withRetry(() =>
+      this.api.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: range(title, "A1"),
+        valueInputOption: "RAW",
+        requestBody: { values: [headers] },
+      }),
+    );
+  }
+
+  /**
+   * 檢查表頭是否為最新定義。
+   *
+   * 只有「空分頁」才會自動修表頭。已經有資料的分頁一律不動——
+   * 欄位定義改版後若只改表頭不搬資料，既有的每一列都會整排錯位，
+   * 那比留著舊表頭更糟，而且是靜默發生的。
+   * 這種情況改為記錄下來，由 /api/health 回報，請人工決定要遷移還是刪除。
+   */
+  private async ensureHeaders(title: string, headers: string[]): Promise<void> {
+    if (this.headerChecked.has(title)) return;
+    this.headerChecked.add(title);
+
+    const lastCol = colLetter(headers.length);
+    const res = await withRetry(() =>
+      this.api.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: range(title, `A1:${lastCol}2`),
+      }),
+    );
+    const rows = res.data.values ?? [];
+    const current = (rows[0] ?? []).map((v) => String(v ?? ""));
+    const same =
+      current.length === headers.length && headers.every((h, i) => current[i] === h);
+    if (same) return;
+
+    const hasData = rows.length > 1 && (rows[1] ?? []).some((v) => String(v ?? "").trim());
+    if (hasData) {
+      schemaWarnings.add(title);
+      console.error(
+        `[九爺] 分頁「${title}」的表頭是舊版且已有資料，未自動更動以免欄位錯位。` +
+          `請將該分頁遷移或刪除（npm run session:remove -- <場次代碼>）。`,
+      );
+      return;
+    }
+
+    console.warn(`[九爺] 分頁「${title}」為空且表頭非最新版，已自動更新表頭`);
     await withRetry(() =>
       this.api.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,
@@ -206,7 +278,7 @@ export class SheetsDriver implements StoreDriver {
   async listSessions(): Promise<SessionMeta[]> {
     await this.init();
     const tab = sessionsTabName();
-    const rows = await this.readRows(tab, "G");
+    const rows = await this.readRows(tab, SESSION_LAST_COL);
     const list = rows.map(rowToSession).filter((s): s is SessionMeta => s !== null);
     this.setRowIndex(tab, rows.map((r) => String(r[0] ?? "")));
     return list;
@@ -236,7 +308,7 @@ export class SheetsDriver implements StoreDriver {
       row = this.rowIndex.get(tab)?.get(meta.code);
     }
     if (!row) throw new Error(`場次 ${meta.code} 不存在於總表`);
-    await this.updateRow(tab, row, "G", sessionToRow(meta));
+    await this.updateRow(tab, row, SESSION_LAST_COL, sessionToRow(meta));
   }
 
   // ---- 玩家 ----
@@ -244,7 +316,7 @@ export class SheetsDriver implements StoreDriver {
   async listPlayers(code: string): Promise<Player[]> {
     await this.init();
     const tab = playersTabName(code);
-    const rows = await this.readRows(tab, "I");
+    const rows = await this.readRows(tab, PLAYER_LAST_COL);
     this.setRowIndex(tab, rows.map((r) => String(r[0] ?? "")));
     return rows.map(rowToPlayer).filter((p): p is Player => p !== null);
   }
@@ -277,7 +349,7 @@ export class SheetsDriver implements StoreDriver {
       const row = index?.get(player.id);
       if (!row) throw new Error(`玩家 ${player.id} 不存在於 ${tab}`);
       return {
-        range: range(tab, `A${row}:I${row}`),
+        range: range(tab, `A${row}:${PLAYER_LAST_COL}${row}`),
         values: [playerToRow(player)],
       };
     });
@@ -294,7 +366,7 @@ export class SheetsDriver implements StoreDriver {
 
   async listLog(code: string, limit: number): Promise<LogEntry[]> {
     await this.init();
-    const rows = await this.readRows(logTabName(code), "I");
+    const rows = await this.readRows(logTabName(code), LOG_LAST_COL);
     return rows
       .slice(-limit)
       .map(rowToLog)
