@@ -1,15 +1,20 @@
-# Render 藍圖：在 Render 選 "New > Blueprint" 並指向這個 repo 即可
+# Render 藍圖
 #
-# 為什麼推薦 Render：這個專案的寫入鎖與快取都在單一 Node 程序的記憶體裡，
-# 需要「一個長駐實例」而不是會自動水平擴展的 serverless 環境。
+# 用法：Render 後台 → New → Blueprint → 選這個 repo → Apply
+#
+# 為什麼用 Render 而不是 Vercel：這個專案的寫入鎖與快取都在單一 Node 程序的
+# 記憶體裡，需要「一個長駐實例」，而不是會自動水平擴展的 serverless 環境。
 services:
   - type: web
     name: jiuye-yanglao
     runtime: node
     plan: free
+    # 新加坡機房，台灣連線延遲最低
+    region: singapore
     buildCommand: npm ci && npm run build
     startCommand: npm start
-    healthCheckPath: /
+    # 這支端點會回報憑證有沒有吃到，部署後可直接打開檢查
+    healthCheckPath: /api/health
     envVars:
       # sync: false = 值不寫在 repo 裡，部署後到 Render 後台手動填
       - key: GOOGLE_SHEETS_SPREADSHEET_ID

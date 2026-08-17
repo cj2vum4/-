@@ -286,15 +286,76 @@ GitHub Pages 只服務靜態檔案，**無法執行這個專案**：
 ### 建議：Render（免費方案即可）
 
 這個專案的鎖與快取都在單一 Node 程序內，最適合「一個長駐實例」的環境。
+以下是完整步驟，第一次做也能跟著走完。
 
-1. 到 [Render](https://render.com) → New → Blueprint → 指向這個 repo
-2. 它會讀取 `render.yaml` 自動建立服務
-3. 到服務的 Environment 分頁填入兩個變數：
-   - `GOOGLE_SHEETS_SPREADSHEET_ID`
-   - `GOOGLE_SERVICE_ACCOUNT_JSON`（整包 JSON，或 base64）
-4. 部署完成後會得到一組網址，開場前先打開讓它醒著即可
+#### 步驟 0：先設定 GitHub 的預設分支
 
-> 免費方案閒置 15 分鐘會休眠，冷啟動約 50 秒。活動開始前先開一次就沒問題。
+Render 預設會抓 repo 的 **default branch**。到 GitHub：
+
+`Settings` → `General` → `Default branch` → 按旁邊的 ⇄ 圖示 → 選擇你要部署的分支 → `Update`
+
+> 這跟 GitHub Pages 無關。Pages 不管設哪個分支都跑不動這個專案（見上方說明），
+> 建議直接到 `Settings` → `Pages` 把它關掉，免得之後自己混淆。
+
+#### 步驟 1：註冊 Render
+
+到 [render.com](https://render.com) 用 **GitHub 帳號登入**，最省事，之後授權 repo 也順。
+
+#### 步驟 2：建立服務
+
+1. 右上角 `New +` → 選 **Blueprint**
+2. 第一次會要你授權 GitHub。按 `Configure account`，選擇要開放的 repo
+   （可以只授權這一個，不必開放全部）
+3. 回到 Render，在列表中選這個 repo → `Connect`
+4. Render 會自動讀取 `render.yaml`，顯示要建立的服務 `jiuye-yanglao`
+5. 按 `Apply`
+
+#### 步驟 3：填入兩個環境變數
+
+`render.yaml` 裡這兩個變數標記為 `sync: false`，意思是「值不寫在程式碼裡，
+由你在後台填」。Render 會直接跳出來問，或到服務的 `Environment` 分頁新增：
+
+| 變數名稱 | 值 |
+|---|---|
+| `GOOGLE_SHEETS_SPREADSHEET_ID` | 你的試算表網址中 `/d/` 後面那一段 |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | 服務帳號 JSON 檔的**完整內容**（從 `{` 到 `}` 全部貼上） |
+
+> Render 的環境變數欄位支援多行，JSON 可以直接整包貼進去，不需要轉成 base64。
+> 貼完記得按 `Save Changes`，它會自動重新部署。
+
+#### 步驟 4：等部署完成
+
+第一次建置大約 3～5 分鐘（要裝相依套件 + 建置 Next.js）。
+在 `Logs` 分頁可以看進度，看到 `Ready` 或服務狀態變成綠色 `Live` 就完成了。
+
+網址長得像 `https://jiuye-yanglao.onrender.com`。
+
+#### 步驟 5：驗證設定正確
+
+打開 `你的網址/api/health`，應該看到：
+
+```json
+{
+  "ok": true,
+  "storage": "sheets",
+  "spreadsheetId": "1Zgu…qYuU（共 44 字元）",
+  "credentials": "GOOGLE_SERVICE_ACCOUNT_JSON",
+  "problems": [],
+  "hint": "已連上 Google Sheet。"
+}
+```
+
+**`storage` 是 `sheets` 就對了。** 如果是 `memory`，代表環境變數沒吃到，
+`problems` 陣列會直接告訴你少了哪一個。這支端點只回傳布林值與遮蔽後的 ID，
+不會洩漏金鑰內容，可以放心打開來看。
+
+首頁最下方也會顯示目前模式，可以交叉確認。
+
+#### 免費方案的一個特性
+
+閒置 15 分鐘後服務會休眠，下一個請求要等約 50 秒冷啟動。
+**活動開始前先打開網址讓它醒著**，之後只要持續有人使用就不會再睡。
+（升級到 Starter 方案約 7 美元/月可以免除休眠，但辦活動前先開一次就夠了。）
 
 ### 其他選項
 
@@ -305,10 +366,17 @@ GitHub Pages 只服務靜態檔案，**無法執行這個專案**：
 | **本機 + Cloudflare Tunnel** | ✅ 活動現場很實用 | 用筆電跑 `npm start`，開一條 tunnel 給手機連。零成本、零延遲，但依賴現場網路 |
 | **GitHub Pages / 純靜態託管** | ❌ 不可行 | 見上方說明 |
 
-### 部署前提醒
+### 部署後遇到問題怎麼查
 
-目前 repo 只有 `claude/work-environment-check-6adtk7` 一個分支。多數平台預設會找 `main`，
-請先把這個分支合併到 `main`（或在平台設定中指定要部署的分支）。
+| 症狀 | 先看這裡 |
+|---|---|
+| 首頁顯示「記憶體暫存」 | `/api/health` 的 `problems` 陣列，通常是環境變數沒填或拼錯 |
+| 開場時跳 403 | 試算表沒有分享給服務帳號，或權限只給了「檢視者」 |
+| 第一個請求很慢 | 免費方案冷啟動，正常現象，等約 50 秒 |
+| 建置失敗 | Render 的 `Logs` 分頁；本機先跑 `npm run build` 確認能過 |
+| 改了程式沒更新 | Render 預設會在 push 後自動重新部署，可到 `Events` 分頁確認有觸發 |
+
+本機也可以先用 `npm run check:sheets` 確認憑證本身沒問題，再排除平台設定。
 
 ---
 
