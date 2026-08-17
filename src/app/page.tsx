@@ -1,11 +1,16 @@
 import Link from "next/link";
 import { APP_NAME } from "@/lib/config";
-import { storageMode } from "@/lib/store";
+import { diagnoseCredentials } from "@/lib/store/credentials";
 
 export const dynamic = "force-dynamic";
 
 export default function LandingPage() {
-  const mode = storageMode();
+  const cred = diagnoseCredentials();
+  const hasSheetId = Boolean((process.env.GOOGLE_SHEETS_SPREADSHEET_ID ?? "").trim());
+  // 三種狀態要分清楚：設定好、設定了但壞掉、根本沒設定。
+  // 中間那種最危險——若誤報成正常，主持人會辦完整場才發現什麼都沒存到。
+  const mode: "sheets" | "broken" | "memory" =
+    hasSheetId && cred.ok ? "sheets" : cred.source || hasSheetId ? "broken" : "memory";
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col justify-center px-5 py-12">
@@ -43,6 +48,10 @@ export default function LandingPage() {
           資料庫模式：
           {mode === "sheets" ? (
             <span className="text-jade-soft">Google Sheet（正式）</span>
+          ) : mode === "broken" ? (
+            <span className="text-vermilion-soft">
+              ⚠ 設定有誤，資料不會寫入試算表 —— 請開啟 /api/health 查看原因
+            </span>
           ) : (
             <span className="text-vermilion-soft">記憶體暫存（未設定憑證，重啟即清空）</span>
           )}

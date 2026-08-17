@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "tsc --noEmit && next build",
     "start": "next start",
-    "test": "node --experimental-strip-types tests/date.test.mjs",
+    "test": "node --experimental-strip-types tests/date.test.mjs && node --experimental-strip-types tests/credentials.test.mjs",
     "typecheck": "tsc --noEmit",
     "check:sheets": "node --env-file=.env.local scripts/check-sheets.mjs",
     "session:remove": "node --env-file=.env.local scripts/remove-session.mjs",

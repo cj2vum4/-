@@ -1,4 +1,5 @@
 import { google, type sheets_v4 } from "googleapis";
+import { readCredentials } from "./credentials";
 import type { LogEntry, Player, SessionMeta } from "../types";
 import {
   LOG_HEADERS,
@@ -57,27 +58,11 @@ export function sheetsConfigured(): boolean {
 }
 
 function buildAuth() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (raw) {
-    // 允許直接貼 JSON，或為了避開多行環境變數而使用 base64
-    const text = raw.trim().startsWith("{")
-      ? raw
-      : Buffer.from(raw, "base64").toString("utf8");
-    const creds = JSON.parse(text);
-    return new google.auth.GoogleAuth({ credentials: creds, scopes: SCOPES });
-  }
-
-  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
-  const key = process.env.GOOGLE_PRIVATE_KEY;
-  if (email && key) {
-    return new google.auth.GoogleAuth({
-      credentials: { client_email: email, private_key: key.replace(/\\n/g, "\n") },
-      scopes: SCOPES,
-    });
-  }
-
-  // 交給 GOOGLE_APPLICATION_CREDENTIALS / ADC
-  return new google.auth.GoogleAuth({ scopes: SCOPES });
+  const credentials = readCredentials();
+  // readCredentials 回 null 代表要走 GOOGLE_APPLICATION_CREDENTIALS / ADC
+  return credentials
+    ? new google.auth.GoogleAuth({ credentials, scopes: SCOPES })
+    : new google.auth.GoogleAuth({ scopes: SCOPES });
 }
 
 /**
@@ -91,7 +76,7 @@ function buildAuth() {
 export class SheetsDriver implements StoreDriver {
   readonly kind = "sheets" as const;
 
-  private api: sheets_v4.Sheets;
+  private apiInstance: sheets_v4.Sheets | null = null;
   private spreadsheetId: string;
   private initPromise: Promise<void> | null = null;
   /** 已知存在的分頁名稱，避免每次都打 spreadsheets.get */
@@ -100,8 +85,15 @@ export class SheetsDriver implements StoreDriver {
   private rowIndex = new Map<string, Map<string, number>>();
 
   constructor() {
-    this.api = google.sheets({ version: "v4", auth: buildAuth() });
-    this.spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID!;
+    // 建構子刻意不解析憑證。若在這裡拋出例外，會連帶讓每一個頁面與
+    // /api/health 都變成 500——而 /api/health 正是要用來診斷憑證問題的端點。
+    this.spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID ?? "";
+  }
+
+  /** 第一次真正要打 API 時才建立認證，錯誤會以一般的 API 錯誤浮現 */
+  private get api(): sheets_v4.Sheets {
+    this.apiInstance ??= google.sheets({ version: "v4", auth: buildAuth() });
+    return this.apiInstance;
   }
 
   init(): Promise<void> {
