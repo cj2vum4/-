@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "tsc --noEmit && next build",
     "start": "next start",
     "test": "node --experimental-strip-types tests/date.test.mjs",
     "typecheck": "tsc --noEmit",
     "check:sheets": "node --env-file=.env.local scripts/check-sheets.mjs",
-    "session:remove": "node --env-file=.env.local scripts/remove-session.mjs"
+    "session:remove": "node --env-file=.env.local scripts/remove-session.mjs",
+    "build:only": "next build"
   },
   "dependencies": {
     "googleapis": "^174.0.1",
