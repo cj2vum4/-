@@ -12,6 +12,10 @@ export const dynamic = "force-dynamic";
  */
 export async function GET() {
   try {
+    // Render 會自動注入這幾個變數，用來確認線上跑的是哪一個 commit
+    const commit = process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? null;
+    const branch = process.env.RENDER_GIT_BRANCH ?? null;
+
     const spreadsheetId = (process.env.GOOGLE_SHEETS_SPREADSHEET_ID ?? "").trim();
     const cred = diagnoseCredentials();
 
@@ -26,6 +30,8 @@ export async function GET() {
       {
         ok: problems.length === 0,
         storage: usingSheets ? "sheets" : "memory",
+        // 推了新版卻沒看到變化時，先比對這裡的 commit 是不是最新的那一筆
+        deployed: { commit: commit ? commit.slice(0, 7) : null, branch },
         spreadsheetId: spreadsheetId
           ? `${spreadsheetId.slice(0, 4)}…${spreadsheetId.slice(-4)}（共 ${spreadsheetId.length} 字元）`
           : null,
