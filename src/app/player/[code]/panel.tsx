@@ -14,7 +14,7 @@ import {
   StatusPill,
 } from "@/components/ui";
 import { CHARACTER_MAP, DIFFICULTY_STYLE, type Difficulty } from "@/lib/characters";
-import { RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
+import { INVESTIGATION_LIMIT, RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
 import {
   ApiError,
   api,
@@ -24,6 +24,7 @@ import {
   type PlayerIdentity,
 } from "@/lib/client";
 import { usePlayerState } from "@/lib/use-session-state";
+import type { MyReportView, PublicPlayerView } from "@/lib/types";
 
 interface CharacterOption {
   id: string;
@@ -416,6 +417,16 @@ function LiveBoard({
           </ul>
         </Panel>
 
+        {stage?.hasReport ? (
+          <ReportActions
+            code={code}
+            me={me}
+            players={(snapshot?.players ?? []).filter((p) => p.id !== mine.id)}
+            myReports={snapshot?.myReports ?? []}
+            investigationsLeft={mine.investigationsLeft}
+          />
+        ) : null}
+
         {character ? (
           <Panel>
             <details>
@@ -461,5 +472,183 @@ function LiveBoard({
         </button>
       </div>
     </PageShell>
+  );
+}
+
+/**
+ * 舉報與調查。
+ *
+ * 刻意不顯示「有沒有人舉報我」——那要花一次調查機會才查得到，
+ * 所以玩家端的快照裡也只有自己送出的舉報。
+ */
+function ReportActions({
+  code,
+  me,
+  players,
+  myReports,
+  investigationsLeft,
+}: {
+  code: string;
+  me: PlayerIdentity;
+  players: PublicPlayerView[];
+  myReports: MyReportView[];
+  investigationsLeft: number;
+}) {
+  const [mode, setMode] = useState<"none" | "report">("none");
+  const [target, setTarget] = useState("");
+  const [clue, setClue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  async function submit() {
+    if (!target) return setError("請選擇要舉報的對象");
+    if (!clue.trim()) return setError("請填寫線索卡編號");
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/api/sessions/${code}/reports`, {
+        method: "POST",
+        player: me,
+        body: JSON.stringify({ targetId: target, clueCode: clue.trim() }),
+      });
+      setResult("舉報已送出，等待主持人判定");
+      setMode("none");
+      setTarget("");
+      setClue("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "舉報失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function investigate() {
+    if (
+      !confirm(
+        `確定要使用一次調查機會嗎？剩餘 ${investigationsLeft} 次（全場上限 ${INVESTIGATION_LIMIT} 次）。`,
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const data = await api<{ reportedCount: number; investigationsLeft: number }>(
+        `/api/sessions/${code}/investigate`,
+        { method: "POST", player: me },
+      );
+      setResult(
+        data.reportedCount > 0
+          ? `調查結果：目前有 ${data.reportedCount} 筆針對你的舉報。剩餘調查 ${data.investigationsLeft} 次。`
+          : `調查結果：目前沒有人舉報你。剩餘調查 ${data.investigationsLeft} 次。`,
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "調查失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel>
+      <PanelTitle
+        extra={
+          <span className="text-xs text-muted">調查剩 {investigationsLeft} 次</span>
+        }
+      >
+        舉 報 與 調 查
+      </PanelTitle>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Button
+          variant={mode === "report" ? "primary" : "ghost"}
+          disabled={busy}
+          onClick={() => {
+            setMode(mode === "report" ? "none" : "report");
+            setError(null);
+            setResult(null);
+          }}
+        >
+          我要舉報
+        </Button>
+        <Button
+          variant="ghost"
+          disabled={busy || investigationsLeft <= 0}
+          onClick={investigate}
+        >
+          {investigationsLeft > 0 ? "調查線索" : "調查已用完"}
+        </Button>
+      </div>
+
+      {mode === "report" ? (
+        <div className="mt-3 space-y-2.5 rounded-lg border border-line bg-lacquer/60 p-3">
+          <label className="block">
+            <span className="mb-1 block text-xs tracking-widest text-muted">舉報對象</span>
+            <select
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+              className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
+            >
+              <option value="">請選擇…</option>
+              {players.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs tracking-widest text-muted">線索卡編號</span>
+            <input
+              value={clue}
+              onChange={(e) => setClue(e.target.value)}
+              placeholder="例：C03"
+              className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
+            />
+          </label>
+          <Button onClick={submit} disabled={busy} className="w-full">
+            {busy ? "送出中…" : "送出舉報"}
+          </Button>
+          <p className="text-xs leading-relaxed text-muted/70">
+            舉報成立則對方威望 −1；誤舉報則自己威望 −1。
+            結果不會立刻生效，會在下一次開啟招募時結算。
+          </p>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="mt-3">
+          <Notice>{error}</Notice>
+        </div>
+      ) : null}
+      {result ? (
+        <div className="mt-3">
+          <Notice kind="success">{result}</Notice>
+        </div>
+      ) : null}
+
+      {myReports.length > 0 ? (
+        <ul className="mt-3 space-y-1.5 border-t border-line/50 pt-3">
+          {myReports.map((r) => (
+            <li key={r.id} className="flex items-center gap-2 text-xs">
+              <span className="text-muted">舉報</span>
+              <b className="text-paper/85">{r.targetName}</b>
+              <span className="text-muted/60">線索 {r.clueCode}</span>
+              <span className="ml-auto">
+                {r.verdict === "" ? (
+                  <span className="text-muted">待判定</span>
+                ) : r.verdict === "success" ? (
+                  <span className="text-jade-soft">成立{r.settled ? "・已生效" : "・待生效"}</span>
+                ) : (
+                  <span className="text-vermilion-soft">
+                    不成立{r.settled ? "・已生效" : "・待生效"}
+                  </span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </Panel>
   );
 }

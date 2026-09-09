@@ -11,6 +11,8 @@ const TYPE_LABEL: Record<string, string> = {
   recruit: "招募",
   faction: "陣營",
   branch: "分支",
+  report: "舉報",
+  investigate: "調查",
   note: "備註",
 };
 

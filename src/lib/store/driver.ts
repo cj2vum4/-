@@ -1,6 +1,6 @@
 import type { Faction, HiddenBranch } from "../characters";
 import type { LedgerSource } from "../config";
-import type { LogEntry, Player, SessionMeta } from "../types";
+import type { LogEntry, Player, Report, ReportVerdict, SessionMeta } from "../types";
 
 /**
  * 儲存層介面。
@@ -22,6 +22,10 @@ export interface StoreDriver {
   /** 一次寫回多位玩家。全體發放時若逐筆呼叫 API，人一多就要等十幾秒 */
   savePlayers(code: string, players: Player[]): Promise<void>;
 
+  listReports(code: string): Promise<Report[]>;
+  createReport(code: string, report: Report): Promise<void>;
+  saveReports(code: string, reports: Report[]): Promise<void>;
+
   listLog(code: string, limit: number): Promise<LogEntry[]>;
   /** 一次補上多筆紀錄，同樣是為了避免逐筆往返 */
   appendLogs(code: string, entries: LogEntry[]): Promise<void>;
@@ -31,6 +35,7 @@ export interface StoreDriver {
 export const sessionsTabName = () => "場次總表";
 export const playersTabName = (code: string) => `${code}_玩家`;
 export const logTabName = (code: string) => `${code}_紀錄`;
+export const reportsTabName = (code: string) => `${code}_舉報`;
 
 export const SESSION_HEADERS = [
   "場次代碼",
@@ -62,6 +67,21 @@ export const PLAYER_HEADERS = [
   "更新時間",
 ];
 export const PLAYER_LAST_COL = "O";
+
+export const REPORT_HEADERS = [
+  "舉報代碼",
+  "時間",
+  "舉報人代碼",
+  "舉報人",
+  "被舉報人代碼",
+  "被舉報人",
+  "線索卡編號",
+  "判定結果",
+  "判定時間",
+  "已生效",
+  "生效時間",
+];
+export const REPORT_LAST_COL = "K";
 
 export const LOG_HEADERS = [
   "時間",
@@ -181,6 +201,43 @@ export function rowToLog(row: unknown[]): LogEntry | null {
     reason: str(row[8]),
     operator: str(row[9]),
     publicVisible: bool(row[10]),
+  };
+}
+
+export function reportToRow(r: Report): (string | number)[] {
+  return [
+    r.id,
+    r.ts,
+    r.reporterId,
+    r.reporterName,
+    r.targetId,
+    r.targetName,
+    r.clueCode,
+    r.verdict === "success" ? "成功" : r.verdict === "fail" ? "失敗" : "待判定",
+    r.judgedAt,
+    r.settled ? "是" : "否",
+    r.settledAt,
+  ];
+}
+
+export function rowToReport(row: unknown[]): Report | null {
+  const id = str(row[0]);
+  if (!id) return null;
+  const verdictText = str(row[7]);
+  const verdict: ReportVerdict =
+    verdictText === "成功" ? "success" : verdictText === "失敗" ? "fail" : "";
+  return {
+    id,
+    ts: str(row[1]),
+    reporterId: str(row[2]),
+    reporterName: str(row[3]),
+    targetId: str(row[4]),
+    targetName: str(row[5]),
+    clueCode: str(row[6]),
+    verdict,
+    judgedAt: str(row[8]),
+    settled: bool(row[9]),
+    settledAt: str(row[10]),
   };
 }
 

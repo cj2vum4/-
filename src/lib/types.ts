@@ -65,6 +65,31 @@ export interface Player {
   updatedAt: string;
 }
 
+/**
+ * 舉報紀錄。
+ *
+ * 依規則，威望值異動「不即時生效」，要等到下一次開啟招募時才批次更新，
+ * 所以判定（verdict）與生效（settled）是兩個獨立階段。
+ */
+export type ReportVerdict = "" | "success" | "fail";
+
+export interface Report {
+  id: string;
+  ts: string;
+  reporterId: string;
+  reporterName: string;
+  targetId: string;
+  targetName: string;
+  /** 玩家填寫的線索卡編號 */
+  clueCode: string;
+  /** 空字串＝尚待主持人判定 */
+  verdict: ReportVerdict;
+  judgedAt: string;
+  /** 威望值是否已於某次開啟招募時生效 */
+  settled: boolean;
+  settledAt: string;
+}
+
 export type LogType =
   | "session"
   | "join"
@@ -73,6 +98,8 @@ export type LogType =
   | "recruit"
   | "faction"
   | "branch"
+  | "report"
+  | "investigate"
   | "note";
 
 /** append-only 流水帳，永不覆寫，方便事後對帳與爭議追溯 */
@@ -110,6 +137,17 @@ export interface SelfPlayerView extends PublicPlayerView {
   hiddenBranch: HiddenBranch | "";
   drawsRemaining: number;
   investigationsUsed: number;
+  investigationsLeft: number;
+}
+
+/** 玩家只看得到自己送出的舉報，看不到別人舉報了誰 */
+export interface MyReportView {
+  id: string;
+  ts: string;
+  targetName: string;
+  clueCode: string;
+  verdict: ReportVerdict;
+  settled: boolean;
 }
 
 export interface SessionPublicMeta {
@@ -127,6 +165,8 @@ export interface PlayerSnapshot {
   session: SessionPublicMeta;
   me: SelfPlayerView;
   players: PublicPlayerView[];
+  /** 只含自己送出的舉報；被舉報與否要靠「調查線索」才知道 */
+  myReports: MyReportView[];
   log: LogEntry[];
   rev: number;
   fetchedAt: string;
@@ -137,6 +177,7 @@ export interface HostSnapshot {
   view: "host";
   session: SessionPublicMeta;
   players: Player[];
+  reports: Report[];
   log: LogEntry[];
   rev: number;
   fetchedAt: string;

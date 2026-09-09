@@ -3,6 +3,7 @@ import { CHARACTER_MAP, FACTIONS, HIDDEN_BRANCHES, type Faction, type HiddenBran
 import {
   DEFAULT_LEDGER_SOURCE,
   DEFAULT_STAGE,
+  INVESTIGATION_LIMIT,
   LOG_TAIL,
   RESOURCE_MAP,
   STAGE_MAP,
@@ -12,6 +13,9 @@ import { GameError } from "./errors";
 import { getDriver } from "./store";
 import type {
   HostSnapshot,
+  MyReportView,
+  Report,
+  ReportVerdict,
   LogEntry,
   LogType,
   Player,
@@ -33,6 +37,7 @@ const CACHE_TTL_MS = Number(process.env.SESSION_CACHE_TTL_MS ?? 15_000);
 interface CacheEntry {
   session: SessionMeta;
   players: Player[];
+  reports: Report[];
   log: LogEntry[];
   rev: number;
   loadedAt: number;
@@ -72,14 +77,16 @@ async function loadEntry(code: string): Promise<CacheEntry> {
     throw new GameError("SESSION_NOT_FOUND", "無此場次");
   }
 
-  const [players, log] = await Promise.all([
+  const [players, reports, log] = await Promise.all([
     driver.listPlayers(code),
+    driver.listReports(code).catch(() => [] as Report[]),
     driver.listLog(code, LOG_TAIL),
   ]);
 
   const entry: CacheEntry = {
     session,
     players,
+    reports,
     log,
     rev: (cache.get(code)?.rev ?? 0) + 1,
     loadedAt: Date.now(),
@@ -247,6 +254,8 @@ export async function getHostSnapshot(code: string): Promise<HostSnapshot> {
     view: "host",
     session: publicMeta(entry.session),
     players: entry.players.filter((p) => p.status === "active"),
+    // 最新的舉報排前面，主持人才好處理待判定的
+    reports: [...entry.reports].reverse(),
     log: [...entry.log].reverse(),
     rev: entry.rev,
     fetchedAt: new Date().toISOString(),
@@ -283,7 +292,21 @@ export async function getPlayerSnapshot(
     hiddenBranch: me.hiddenBranch,
     drawsRemaining: me.drawsRemaining,
     investigationsUsed: me.investigationsUsed,
+    investigationsLeft: Math.max(0, INVESTIGATION_LIMIT - me.investigationsUsed),
   };
+
+  // 只給自己送出的舉報。「有沒有被別人舉報」要靠調查線索才知道，不能從這裡漏出去。
+  const myReports: MyReportView[] = entry.reports
+    .filter((r) => r.reporterId === playerId)
+    .map((r) => ({
+      id: r.id,
+      ts: r.ts,
+      targetName: r.targetName,
+      clueCode: r.clueCode,
+      verdict: r.verdict,
+      settled: r.settled,
+    }))
+    .reverse();
 
   return {
     view: "player",
@@ -291,6 +314,7 @@ export async function getPlayerSnapshot(
     me: self,
     // 陣營、隱藏分支、勢力值數字、血量都不在這裡，連傳都不傳
     players: active.map(toPublic),
+    myReports,
     // 只給得到「可公開的紀錄」與「與自己有關的紀錄」
     log: [...entry.log]
       .filter((e) => e.publicVisible || e.playerId === playerId)
@@ -344,20 +368,90 @@ export async function setRecruitOpen(code: string, open: boolean): Promise<Sessi
       recruitOpen: open,
       updatedAt: new Date().toISOString(),
     };
-    const log = makeLog({
-      type: "recruit",
-      reason: open ? `開啟招募：${stage?.label}` : `鎖定招募：${stage?.label}`,
-      operator: "主持人",
-      publicVisible: true,
-    });
+    const logs = [
+      makeLog({
+        type: "recruit",
+        reason: open ? `開啟招募：${stage?.label}` : `鎖定招募：${stage?.label}`,
+        operator: "主持人",
+        publicVisible: true,
+      }),
+    ];
 
     await getDriver().saveSession(next);
-    await getDriver().appendLogs(code, [log]);
-
     entry.session = next;
-    pushLog(entry, log);
+
+    // 依規則：舉報造成的威望值異動不即時生效，
+    // 而是在「下一次開啟招募」時才批次更新。
+    if (open) {
+      logs.push(...(await settlePendingReports(entry)));
+    }
+
+    await getDriver().appendLogs(code, logs);
+    pushLog(entry, ...logs);
     return next;
   });
+}
+
+/**
+ * 結算所有「已判定但尚未生效」的舉報。
+ * 成功→被舉報人威望 -1；失敗（誤舉報）→舉報人自己威望 -1。
+ * 只能在鎖內呼叫。
+ */
+async function settlePendingReports(entry: CacheEntry): Promise<LogEntry[]> {
+  const pending = entry.reports.filter((r) => r.verdict !== "" && !r.settled);
+  if (pending.length === 0) return [];
+
+  const now = new Date().toISOString();
+  const logs: LogEntry[] = [];
+  const touched = new Map<string, Player>();
+
+  for (const report of pending) {
+    const loserId = report.verdict === "success" ? report.targetId : report.reporterId;
+    const player = entry.players.find((p) => p.id === loserId);
+    if (!player) continue;
+
+    const current = touched.get(player.id) ?? { ...player };
+    current.prestige -= 1;
+    current.updatedAt = now;
+    touched.set(player.id, current);
+
+    // 威望值是公開數值，所以扣分本身瞞不住；但「誰舉報了誰」必須留白，
+    // 否則玩家就不需要花掉有限的調查機會去查了——那個機制會直接失效。
+    // 完整內容只有主持人（在舉報判定面板）與舉報人自己（在我的舉報清單）看得到。
+    logs.push(
+      makeLog({
+        type: "report",
+        playerId: player.id,
+        playerName: player.name,
+        resource: "威望值",
+        delta: -1,
+        balanceAfter: current.prestige,
+        source: "舉報懲罰",
+        reason: report.verdict === "success" ? "遭人舉報成立" : "誤舉報遭罰",
+        operator: "系統",
+        publicVisible: true,
+      }),
+    );
+  }
+
+  const settled = pending.map((r) => ({ ...r, settled: true, settledAt: now }));
+  const updatedPlayers = [...touched.values()];
+
+  const driver = getDriver();
+  await Promise.all([
+    updatedPlayers.length ? driver.savePlayers(entry.session.code, updatedPlayers) : null,
+    driver.saveReports(entry.session.code, settled),
+  ]);
+
+  for (const p of updatedPlayers) {
+    const live = entry.players.find((x) => x.id === p.id);
+    if (live) Object.assign(live, p);
+  }
+  for (const r of settled) {
+    const live = entry.reports.find((x) => x.id === r.id);
+    if (live) Object.assign(live, r);
+  }
+  return logs;
 }
 
 export async function setSessionStatus(
@@ -626,5 +720,152 @@ export async function applyGrant(
     targets.forEach((p, i) => Object.assign(p, updated[i]));
     pushLog(entry, ...logs);
     return { affected: targets.length };
+  });
+}
+
+// ---------------- 舉報與調查 ----------------
+
+export async function submitReport(
+  code: string,
+  reporterId: string,
+  targetId: string,
+  clueCode: string,
+): Promise<Report> {
+  const clue = clueCode.trim();
+  if (!clue) throw new GameError("BAD_REQUEST", "請填寫線索卡編號");
+  if (clue.length > 30) throw new GameError("BAD_REQUEST", "線索卡編號太長");
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const stage = STAGE_MAP[entry.session.stageId];
+    if (!stage?.hasReport) {
+      throw new GameError("BAD_REQUEST", `目前為「${stage?.label}」階段，尚未開放舉報`);
+    }
+
+    const reporter = entry.players.find((p) => p.id === reporterId && p.status === "active");
+    const target = entry.players.find((p) => p.id === targetId && p.status === "active");
+    if (!reporter) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
+    if (!target) throw new GameError("PLAYER_NOT_FOUND", "找不到被舉報的對象");
+    if (reporterId === targetId) throw new GameError("BAD_REQUEST", "不能舉報自己");
+
+    const report: Report = {
+      id: `R${nanoId()}`,
+      ts: new Date().toISOString(),
+      reporterId: reporter.id,
+      reporterName: reporter.name,
+      targetId: target.id,
+      targetName: target.name,
+      clueCode: clue,
+      verdict: "",
+      judgedAt: "",
+      settled: false,
+      settledAt: "",
+    };
+
+    const log = makeLog({
+      type: "report",
+      playerId: reporter.id,
+      playerName: reporter.name,
+      reason: `提出舉報（線索 ${clue}），等待判定`,
+      operator: "玩家",
+      // 舉報內容在判定生效前不能公開，否則被舉報人立刻就知道了
+      publicVisible: false,
+    });
+
+    await getDriver().createReport(code, report);
+    await getDriver().appendLogs(code, [log]);
+
+    entry.reports.push(report);
+    pushLog(entry, log);
+    return report;
+  });
+}
+
+/** 主持人判定舉報成立與否。威望值不會立刻變動，要等下次開啟招募才結算。 */
+export async function judgeReport(
+  code: string,
+  reportId: string,
+  verdict: Exclude<ReportVerdict, "">,
+): Promise<Report> {
+  if (verdict !== "success" && verdict !== "fail") {
+    throw new GameError("BAD_REQUEST", "判定結果只能是成立或不成立");
+  }
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const report = entry.reports.find((r) => r.id === reportId);
+    if (!report) throw new GameError("BAD_REQUEST", "找不到這筆舉報");
+    if (report.settled) throw new GameError("BAD_REQUEST", "這筆舉報已經結算，不能再改判定");
+
+    const next: Report = { ...report, verdict, judgedAt: new Date().toISOString() };
+    const log = makeLog({
+      type: "report",
+      playerId: report.targetId,
+      playerName: report.targetName,
+      reason:
+        verdict === "success"
+          ? `舉報成立：${report.reporterName} → ${report.targetName}（線索 ${report.clueCode}），待下次開啟招募時生效`
+          : `舉報不成立：${report.reporterName} 誤舉報 ${report.targetName}，待下次開啟招募時生效`,
+      operator: "主持人",
+      publicVisible: false,
+    });
+
+    await getDriver().saveReports(code, [next]);
+    await getDriver().appendLogs(code, [log]);
+
+    Object.assign(report, next);
+    pushLog(entry, log);
+    return next;
+  });
+}
+
+export interface InvestigationResult {
+  reportedCount: number;
+  investigationsLeft: number;
+}
+
+/** 玩家消耗一次調查機會，查詢是否有人舉報自己。每人上限見 INVESTIGATION_LIMIT。 */
+export async function useInvestigation(
+  code: string,
+  playerId: string,
+): Promise<InvestigationResult> {
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const player = entry.players.find((p) => p.id === playerId && p.status === "active");
+    if (!player) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
+
+    const stage = STAGE_MAP[entry.session.stageId];
+    if (!stage?.hasReport) {
+      throw new GameError("BAD_REQUEST", `目前為「${stage?.label}」階段，尚未開放調查`);
+    }
+    if (player.investigationsUsed >= INVESTIGATION_LIMIT) {
+      throw new GameError("BAD_REQUEST", `調查次數已用完（上限 ${INVESTIGATION_LIMIT} 次）`);
+    }
+
+    const reportedCount = entry.reports.filter((r) => r.targetId === playerId).length;
+    const next: Player = {
+      ...player,
+      investigationsUsed: player.investigationsUsed + 1,
+      updatedAt: new Date().toISOString(),
+    };
+    const log = makeLog({
+      type: "investigate",
+      playerId: player.id,
+      playerName: player.name,
+      reason: `使用調查線索（第 ${next.investigationsUsed} 次），查得 ${reportedCount} 筆針對自己的舉報`,
+      operator: "玩家",
+      publicVisible: false,
+    });
+
+    await getDriver().savePlayers(code, [next]);
+    await getDriver().appendLogs(code, [log]);
+
+    Object.assign(player, next);
+    pushLog(entry, log);
+
+    return {
+      reportedCount,
+      investigationsLeft: Math.max(0, INVESTIGATION_LIMIT - next.investigationsUsed),
+    };
   });
 }

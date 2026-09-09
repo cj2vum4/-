@@ -1,9 +1,10 @@
-import type { LogEntry, Player, SessionMeta } from "../types";
+import type { LogEntry, Player, Report, SessionMeta } from "../types";
 import type { StoreDriver } from "./driver";
 
 interface Bucket {
   meta: SessionMeta;
   players: Player[];
+  reports: Report[];
   log: LogEntry[];
 }
 
@@ -31,7 +32,7 @@ export class MemoryDriver implements StoreDriver {
   }
 
   async createSession(meta: SessionMeta): Promise<void> {
-    buckets.set(meta.code, { meta: { ...meta }, players: [], log: [] });
+    buckets.set(meta.code, { meta: { ...meta }, players: [], reports: [], log: [] });
   }
 
   async saveSession(meta: SessionMeta): Promise<void> {
@@ -53,6 +54,23 @@ export class MemoryDriver implements StoreDriver {
     for (const player of players) {
       const i = list.findIndex((p) => p.id === player.id);
       if (i >= 0) list[i] = { ...player };
+    }
+  }
+
+  async listReports(code: string): Promise<Report[]> {
+    return (buckets.get(code)?.reports ?? []).map((r) => ({ ...r }));
+  }
+
+  async createReport(code: string, report: Report): Promise<void> {
+    buckets.get(code)?.reports.push({ ...report });
+  }
+
+  async saveReports(code: string, reports: Report[]): Promise<void> {
+    const list = buckets.get(code)?.reports;
+    if (!list) return;
+    for (const r of reports) {
+      const i = list.findIndex((x) => x.id === r.id);
+      if (i >= 0) list[i] = { ...r };
     }
   }
 

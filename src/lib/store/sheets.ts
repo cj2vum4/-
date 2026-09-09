@@ -1,19 +1,24 @@
 import { google, type sheets_v4 } from "googleapis";
 import { readCredentials } from "./credentials";
-import type { LogEntry, Player, SessionMeta } from "../types";
+import type { LogEntry, Player, Report, SessionMeta } from "../types";
 import {
   LOG_HEADERS,
   LOG_LAST_COL,
   PLAYER_HEADERS,
   PLAYER_LAST_COL,
+  REPORT_HEADERS,
+  REPORT_LAST_COL,
   SESSION_HEADERS,
   SESSION_LAST_COL,
   logTabName,
   logToRow,
   playerToRow,
   playersTabName,
+  reportToRow,
+  reportsTabName,
   rowToLog,
   rowToPlayer,
+  rowToReport,
   rowToSession,
   sessionToRow,
   sessionsTabName,
@@ -294,6 +299,7 @@ export class SheetsDriver implements StoreDriver {
     await Promise.all([
       this.ensureTab(playersTabName(meta.code), PLAYER_HEADERS),
       this.ensureTab(logTabName(meta.code), LOG_HEADERS),
+      this.ensureTab(reportsTabName(meta.code), REPORT_HEADERS),
     ]);
     await this.appendRow(sessionsTabName(), sessionToRow(meta));
     this.rowIndex.delete(sessionsTabName());
@@ -351,6 +357,52 @@ export class SheetsDriver implements StoreDriver {
       return {
         range: range(tab, `A${row}:${PLAYER_LAST_COL}${row}`),
         values: [playerToRow(player)],
+      };
+    });
+
+    await withRetry(() =>
+      this.api.spreadsheets.values.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: { valueInputOption: "RAW", data },
+      }),
+    );
+  }
+
+  // ---- 舉報 ----
+
+  async listReports(code: string): Promise<Report[]> {
+    await this.init();
+    const tab = reportsTabName(code);
+    const rows = await this.readRows(tab, REPORT_LAST_COL);
+    this.setRowIndex(tab, rows.map((r) => String(r[0] ?? "")));
+    return rows.map(rowToReport).filter((r): r is Report => r !== null);
+  }
+
+  async createReport(code: string, report: Report): Promise<void> {
+    await this.init();
+    const tab = reportsTabName(code);
+    await this.ensureTab(tab, REPORT_HEADERS);
+    await this.appendRow(tab, reportToRow(report));
+    this.rowIndex.delete(tab);
+  }
+
+  async saveReports(code: string, reports: Report[]): Promise<void> {
+    if (reports.length === 0) return;
+    await this.init();
+    const tab = reportsTabName(code);
+
+    let index = this.rowIndex.get(tab);
+    if (!index || reports.some((r) => !index!.has(r.id))) {
+      await this.listReports(code);
+      index = this.rowIndex.get(tab);
+    }
+
+    const data = reports.map((r) => {
+      const row = index?.get(r.id);
+      if (!row) throw new Error(`舉報 ${r.id} 不存在於 ${tab}`);
+      return {
+        range: range(tab, `A${row}:${REPORT_LAST_COL}${row}`),
+        values: [reportToRow(r)],
       };
     });
 

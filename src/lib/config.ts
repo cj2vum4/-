@@ -62,9 +62,14 @@ export type LedgerSource = (typeof LEDGER_SOURCES)[number];
 
 export const DEFAULT_LEDGER_SOURCE: LedgerSource = "主持人手動發放";
 
+export interface StageQuickPreset {
+  label: string;
+  delta: number;
+}
+
 export interface StageDef {
   id: string;
-  /** 劇本中的階段編號 0–7 */
+  /** 顯示用的階段序號 */
   index: number;
   label: string;
   hint: string;
@@ -72,9 +77,24 @@ export interface StageDef {
   allowJoin: boolean;
   /** 此階段是否有「勢力招募」可供主持人開啟 */
   hasRecruit?: boolean;
+  /** 此階段是否開放玩家舉報與調查 */
+  hasReport?: boolean;
+  /** 此階段是否顯示拓展會的地點核選 */
+  hasLocations?: boolean;
+  /** 進入此階段時，調配面板預設要調的數值 */
+  defaultResource: ResourceKey;
+  /** 進入此階段時，調配面板預設的來源類型 */
+  defaultSource: LedgerSource;
+  /** 此階段常用的調整幅度，取代通用的快捷按鈕 */
+  quickDeltas: number[];
 }
 
-/** 劇本的 8 個階段。改關卡改這裡，資料庫不用動。 */
+/**
+ * 劇本的遊戲階段。改關卡改這裡，資料庫不用動。
+ *
+ * 每個階段都帶著自己的調配預設（要調哪個數值、來源類型、常用幅度），
+ * 主持人切到該階段時面板會自動跟著換，不必每次手動選。
+ */
 export const STAGES: StageDef[] = [
   {
     id: "casting",
@@ -82,6 +102,9 @@ export const STAGES: StageDef[] = [
     label: "角色分配／自我介紹",
     hint: "玩家選角並自我介紹，開場後鎖定",
     allowJoin: true,
+    defaultResource: "power",
+    defaultSource: "主持人手動發放",
+    quickDeltas: [1, 5, 10],
   },
   {
     id: "expo",
@@ -89,51 +112,66 @@ export const STAGES: StageDef[] = [
     label: "拓展會：初始勢力值分配",
     hint: "9 選 3 地點小遊戲，決定開場勢力值差距",
     allowJoin: true,
-  },
-  {
-    id: "act1",
-    index: 2,
-    label: "第一幕過渡：物品與線索",
-    hint: "隨身物品發放、線索卡排序",
-    allowJoin: false,
+    hasLocations: true,
+    defaultResource: "power",
+    defaultSource: "地點小遊戲",
+    quickDeltas: [10, 20, 50, 100],
   },
   {
     id: "week1",
-    index: 3,
+    index: 2,
     label: "第一週：競選會長助理",
     hint: "競選 → 投票 → 第 1 輪勢力招募",
     allowJoin: false,
     hasRecruit: true,
+    hasReport: true,
+    defaultResource: "prestige",
+    defaultSource: "投票獎勵",
+    quickDeltas: [1, 2, 3, 5],
   },
   {
     id: "week2",
-    index: 4,
+    index: 3,
     label: "第二週：暗算九爺",
     hint: "暗算機制 → 兇手公投 → 第 2 輪勢力招募",
     allowJoin: false,
     hasRecruit: true,
+    hasReport: true,
+    defaultResource: "prestige",
+    defaultSource: "投票獎勵",
+    quickDeltas: [1, 2, 3, 5],
   },
   {
     id: "week3",
-    index: 5,
+    index: 4,
     label: "第三週：拍賣",
     hint: "拍賣機制 → 第 3 輪（最終）招募 → 陸秉白隱藏分支確認",
     allowJoin: false,
     hasRecruit: true,
+    hasReport: true,
+    defaultResource: "power",
+    defaultSource: "拍賣扣款",
+    quickDeltas: [100, 200, 300, 500],
   },
   {
     id: "gunfight",
-    index: 6,
+    index: 5,
     label: "第六幕：勢力鬥爭槍戰",
     hint: "血量系統，一次性淘汰賽",
     allowJoin: false,
+    defaultResource: "hp",
+    defaultSource: "槍戰結算",
+    quickDeltas: [1, 2, 3],
   },
   {
     id: "final",
-    index: 7,
+    index: 6,
     label: "會長就任結算",
     hint: "依最終勢力值排名產生職位與稱號",
     allowJoin: false,
+    defaultResource: "power",
+    defaultSource: "系統修正",
+    quickDeltas: [10, 50, 100],
   },
 ];
 
@@ -143,8 +181,35 @@ export const STAGE_MAP: Record<string, StageDef> = Object.fromEntries(
 
 export const DEFAULT_STAGE = STAGES[0].id;
 
-/** 主持台快捷調整幅度 */
+/** 沒有階段預設時的通用快捷幅度 */
 export const QUICK_DELTAS = [1, 5, 10, 50, 100];
+
+/**
+ * 拓展會的 9 個地點，玩家 9 選 3。
+ *
+ * power 目前為 null＝各地點的勢力值尚未提供，主持人勾選後自行輸入金額；
+ * 之後補上數字，勾選就會自動加總。
+ */
+export interface ExpoLocation {
+  id: string;
+  name: string;
+  power: number | null;
+}
+
+export const EXPO_LOCATIONS: ExpoLocation[] = [
+  { id: "fulu", name: "福祿早茶鋪", power: null },
+  { id: "zhonghua", name: "中華養生堂", power: null },
+  { id: "hutou", name: "虎頭幫", power: null },
+  { id: "jinyin", name: "金銀賭坊", power: null },
+  { id: "baichun", name: "百春武館", power: null },
+  { id: "fenghua", name: "風花歌舞廳", power: null },
+  { id: "jiale", name: "家樂百貨行", power: null },
+  { id: "nanpai", name: "南派美食街", power: null },
+  { id: "yongle", name: "永樂錢莊", power: null },
+];
+
+/** 劇本規則：每位玩家從 9 個地點中選 3 個 */
+export const EXPO_PICK_COUNT = 3;
 
 /** 記錄頁最多回傳幾筆給前端 */
 export const LOG_TAIL = 80;

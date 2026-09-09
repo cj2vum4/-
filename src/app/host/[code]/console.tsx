@@ -22,9 +22,10 @@ import {
   type Faction,
 } from "@/lib/characters";
 import {
+  EXPO_LOCATIONS,
+  EXPO_PICK_COUNT,
   LEDGER_SOURCES,
   PLAYER_COUNT_HINT,
-  QUICK_DELTAS,
   RESOURCES,
   STAGES,
   STAGE_MAP,
@@ -119,6 +120,7 @@ function Console({
   const [source, setSource] = useState<LedgerSource>("主持人手動發放");
   const [reason, setReason] = useState("");
   const [custom, setCustom] = useState("");
+  const [locations, setLocations] = useState<Set<string>>(new Set());
   const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -126,6 +128,18 @@ function Console({
   const session = snapshot?.session;
   const stage = session ? STAGE_MAP[session.stageId] : undefined;
   const resourceDef = RESOURCES.find((r) => r.key === resource)!;
+  const quickDeltas = stage?.quickDeltas ?? [1, 5, 10, 50, 100];
+  const pendingReports = (snapshot?.reports ?? []).filter((r) => r.verdict === "");
+  /** 已判定但還沒生效的，會在下次開啟招募時扣威望 */
+  const pendingSettlement = (snapshot?.reports ?? []).filter(
+    (r) => r.verdict !== "" && !r.settled,
+  ).length;
+
+  /** 拓展會：勾選的地點會寫進事由，有設定分數時自動加總 */
+  const pickedLocations = EXPO_LOCATIONS.filter((l) => locations.has(l.id));
+  const locationSum = pickedLocations.every((l) => l.power !== null)
+    ? pickedLocations.reduce((sum, l) => sum + (l.power ?? 0), 0)
+    : null;
 
   useEffect(() => {
     setSelected((prev) => {
@@ -134,6 +148,17 @@ function Console({
       return next.size === prev.size ? prev : next;
     });
   }, [players]);
+
+  // 切換階段時把調配面板換成該階段的預設，主持人不必每次手動選
+  const stageId = session?.stageId;
+  useEffect(() => {
+    if (!stageId) return;
+    const def = STAGE_MAP[stageId];
+    if (!def) return;
+    setResource(def.defaultResource);
+    setSource(def.defaultSource);
+    setLocations(new Set());
+  }, [stageId]);
 
   const flash = useCallback((kind: "success" | "error", text: string) => {
     setToast({ kind, text });
@@ -167,7 +192,9 @@ function Console({
           resource,
           delta,
           source,
-          reason,
+          reason: pickedLocations.length
+            ? `${pickedLocations.map((l) => l.name).join("、")}${reason ? `（${reason}）` : ""}`
+            : reason,
         }),
       });
       flash(
@@ -294,6 +321,58 @@ function Console({
               ))}
             </div>
 
+            {stage?.hasLocations ? (
+              <div className="mb-3 rounded-lg border border-line bg-lacquer/60 p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-xs tracking-widest text-gold/80">
+                    地點（{EXPO_PICK_COUNT} 選）
+                  </span>
+                  <span className="text-xs text-muted">
+                    已勾 <b className="text-gold-soft">{pickedLocations.length}</b>
+                    {locationSum !== null ? (
+                      <span className="ml-2 text-jade-soft">合計 {locationSum}</span>
+                    ) : (
+                      <span className="ml-2 text-muted/60">分數未設定，請自行輸入</span>
+                    )}
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">
+                  {EXPO_LOCATIONS.map((l, i) => {
+                    const on = locations.has(l.id);
+                    return (
+                      <label
+                        key={l.id}
+                        className={`flex cursor-pointer items-center gap-2 rounded border px-2 py-1.5 text-xs transition-colors ${
+                          on ? "border-jade bg-jade/12 text-jade-soft" : "border-line text-paper/80 hover:border-jade/50"
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={on}
+                          onChange={() =>
+                            setLocations((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(l.id)) next.delete(l.id);
+                              else next.add(l.id);
+                              return next;
+                            })
+                          }
+                          className="h-3.5 w-3.5 accent-jade"
+                        />
+                        <span className="tabular text-muted/60">{i + 1}</span>
+                        {l.name}
+                      </label>
+                    );
+                  })}
+                </div>
+                {pickedLocations.length > 0 ? (
+                  <p className="mt-2 text-xs text-muted/70">
+                    送出時會把「{pickedLocations.map((l) => l.name).join("、")}」寫進紀錄事由
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="mb-3 grid gap-2 sm:grid-cols-[190px_1fr]">
               <select
                 value={source}
@@ -314,13 +393,13 @@ function Console({
               />
             </div>
 
-            <div className="grid grid-cols-5 gap-2">
-              {QUICK_DELTAS.map((d) => (
+            <div className={`grid gap-2 ${quickDeltas.length === 3 ? "grid-cols-3" : quickDeltas.length === 4 ? "grid-cols-4" : "grid-cols-5"}`}>
+              {quickDeltas.map((d) => (
                 <Button key={`p${d}`} size="sm" variant="jade" disabled={busy} onClick={() => grant(d)} className="py-2.5">
                   +{d}
                 </Button>
               ))}
-              {QUICK_DELTAS.map((d) => (
+              {quickDeltas.map((d) => (
                 <Button key={`m${d}`} size="sm" variant="danger" disabled={busy} onClick={() => grant(-d)} className="py-2.5">
                   −{d}
                 </Button>
@@ -592,6 +671,11 @@ function Console({
                   ) : (
                     <b className="text-muted">已鎖定</b>
                   )}
+                  {pendingSettlement > 0 ? (
+                    <span className="mt-1 block text-vermilion-soft">
+                      開啟招募時會一併結算 {pendingSettlement} 筆已判定的舉報
+                    </span>
+                  ) : null}
                 </p>
               </>
             ) : (
@@ -600,6 +684,87 @@ function Console({
               </p>
             )}
           </Panel>
+
+          {stage?.hasReport || (snapshot?.reports.length ?? 0) > 0 ? (
+            <Panel>
+              <PanelTitle
+                extra={
+                  pendingReports.length > 0 ? (
+                    <span className="rounded-full border border-vermilion/50 bg-vermilion/10 px-2 py-0.5 text-xs text-vermilion-soft">
+                      {pendingReports.length} 筆待判定
+                    </span>
+                  ) : null
+                }
+              >
+                舉 報 判 定
+              </PanelTitle>
+
+              {(snapshot?.reports.length ?? 0) === 0 ? (
+                <p className="py-4 text-center text-xs text-muted/70">尚無舉報</p>
+              ) : (
+                <ul className="max-h-72 space-y-2 overflow-y-auto">
+                  {snapshot?.reports.map((r) => (
+                    <li
+                      key={r.id}
+                      className={`rounded-lg border px-3 py-2 ${
+                        r.verdict === "" ? "border-vermilion/40 bg-vermilion/5" : "border-line bg-panel-2/50"
+                      }`}
+                    >
+                      <p className="text-sm text-paper/90">
+                        <b className="text-paper">{r.reporterName}</b>
+                        <span className="text-muted"> 舉報 </span>
+                        <b className="text-paper">{r.targetName}</b>
+                      </p>
+                      <p className="mt-0.5 text-xs text-muted">
+                        線索卡 <b className="text-gold-soft">{r.clueCode}</b>
+                      </p>
+                      {r.verdict === "" ? (
+                        <div className="mt-2 flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="jade"
+                            disabled={busy}
+                            onClick={() =>
+                              post(`/reports/${r.id}`, { verdict: "success" }, "已判定成立", "判定失敗")
+                            }
+                          >
+                            成立
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            disabled={busy}
+                            onClick={() =>
+                              post(`/reports/${r.id}`, { verdict: "fail" }, "已判定不成立", "判定失敗")
+                            }
+                          >
+                            不成立
+                          </Button>
+                        </div>
+                      ) : (
+                        <p className="mt-1 text-xs">
+                          <span
+                            className={r.verdict === "success" ? "text-jade-soft" : "text-vermilion-soft"}
+                          >
+                            {r.verdict === "success" ? "成立" : "不成立"}
+                          </span>
+                          <span className="ml-2 text-muted/70">
+                            {r.settled ? "已生效" : "待下次開啟招募時生效"}
+                          </span>
+                        </p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {pendingReports.length > 0 ? (
+                <p className="mt-2.5 text-xs leading-relaxed text-muted/70">
+                  判定後威望值不會立刻變動，會在下一次「開啟招募」時一併結算。
+                </p>
+              ) : null}
+            </Panel>
+          ) : null}
 
           <Panel>
             <PanelTitle>場 次 控 制</PanelTitle>
