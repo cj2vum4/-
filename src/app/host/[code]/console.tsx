@@ -14,7 +14,13 @@ import {
   PanelTitle,
   StatusPill,
 } from "@/components/ui";
-import { CHARACTER_MAP, FACTIONS, HIDDEN_BRANCHES, type Faction } from "@/lib/characters";
+import {
+  CHARACTER_MAP,
+  DIFFICULTY_STYLE,
+  FACTIONS,
+  HIDDEN_BRANCHES,
+  type Faction,
+} from "@/lib/characters";
 import {
   LEDGER_SOURCES,
   PLAYER_COUNT_HINT,
@@ -424,11 +430,20 @@ function Console({
                           ✓
                         </span>
                         <span className="tabular w-5 shrink-0 text-xs text-muted">{i + 1}</span>
-                        <span className="min-w-0 flex-1 truncate text-sm font-bold text-paper">
-                          {p.name}
-                          <span className="ml-1.5 text-[10px] font-normal text-muted/60">
-                            {character?.difficulty}
-                          </span>
+                        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                          <span className="truncate text-sm font-bold text-paper">{p.name}</span>
+                          {character ? (
+                            <>
+                              <span
+                                className={`shrink-0 rounded border px-1 text-[10px] font-normal ${DIFFICULTY_STYLE[character.difficulty]}`}
+                              >
+                                {character.difficulty}
+                              </span>
+                              <span className="hidden shrink-0 text-[10px] text-muted/60 sm:inline">
+                                {character.occupation}
+                              </span>
+                            </>
+                          ) : null}
                         </span>
                         <span className="tabular shrink-0 text-sm text-jade-soft">{p.power}</span>
                         <span className="shrink-0 text-xs text-muted/50">勢</span>

@@ -13,6 +13,7 @@ import {
   PanelTitle,
   StatusPill,
 } from "@/components/ui";
+import { CHARACTER_MAP, DIFFICULTY_STYLE, type Difficulty } from "@/lib/characters";
 import { RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
 import {
   ApiError,
@@ -27,7 +28,13 @@ import { usePlayerState } from "@/lib/use-session-state";
 interface CharacterOption {
   id: string;
   name: string;
-  difficulty: string;
+  difficulty: Difficulty;
+  gender: string;
+  age: number;
+  occupation: string;
+  personality: string;
+  appearance: string;
+  note: string | null;
   taken: boolean;
 }
 
@@ -130,7 +137,9 @@ function CharacterPicker({
           {sessionTitle ?? code}
           <CodeStamp code={code} />
         </h1>
-        <p className="mt-2 text-sm text-muted">請選擇你要扮演的角色。</p>
+        <p className="mt-2 text-sm text-muted">
+          請選擇你要扮演的角色。角色皆可反串，不受性別限制。
+        </p>
       </header>
 
       <Panel>
@@ -138,7 +147,7 @@ function CharacterPicker({
         {characters === null ? (
           <p className="py-6 text-center text-sm text-muted">載入角色中…</p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {characters.map((c) => {
               const on = picked === c.id;
               return (
@@ -147,27 +156,50 @@ function CharacterPicker({
                     type="button"
                     disabled={c.taken || busy}
                     onClick={() => setPicked(c.id)}
-                    className={`flex w-full items-center gap-3 rounded-lg border px-3.5 py-3 text-left transition-colors ${
+                    className={`w-full rounded-xl border px-4 py-3.5 text-left transition-colors ${
                       c.taken
-                        ? "cursor-not-allowed border-line/50 bg-panel-2/30 opacity-45"
+                        ? "cursor-not-allowed border-line/50 bg-panel-2/30 opacity-40"
                         : on
                           ? "border-gold bg-gold/12"
                           : "border-line bg-panel-2/60 hover:border-gold/50"
                     }`}
                   >
-                    <span
-                      className={`text-base font-bold ${on ? "text-gold-soft" : "text-paper"}`}
-                    >
-                      {c.name}
-                    </span>
-                    <span className="text-xs text-muted">難度 {c.difficulty}</span>
-                    <span className="ml-auto text-xs">
-                      {c.taken ? (
-                        <span className="text-muted/60">已被選走</span>
-                      ) : on ? (
-                        <span className="text-gold">已選擇</span>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={`text-lg font-bold ${on ? "text-gold-soft" : "text-paper"}`}
+                      >
+                        {c.name}
+                      </span>
+                      <span
+                        className={`rounded border px-1.5 py-0.5 text-[11px] ${DIFFICULTY_STYLE[c.difficulty]}`}
+                      >
+                        難度 {c.difficulty}
+                      </span>
+                      <span className="text-xs text-muted">
+                        {c.gender}・{c.age} 歲・{c.occupation}
+                      </span>
+                      {c.note ? (
+                        <span className="rounded border border-line px-1.5 py-0.5 text-[11px] text-muted">
+                          {c.note}
+                        </span>
                       ) : null}
-                    </span>
+                      <span className="ml-auto shrink-0 text-xs">
+                        {c.taken ? (
+                          <span className="text-muted/60">已被選走</span>
+                        ) : on ? (
+                          <span className="text-gold">✓ 已選擇</span>
+                        ) : null}
+                      </span>
+                    </div>
+
+                    <p
+                      className={`mt-1.5 text-sm ${on ? "text-gold-soft/90" : "text-paper/75"}`}
+                    >
+                      {c.personality}
+                    </p>
+                    <p className="mt-1 text-xs leading-relaxed text-muted/70">
+                      {c.appearance}
+                    </p>
                   </button>
                 </li>
               );
@@ -255,6 +287,7 @@ function LiveBoard({
   }
 
   if (!mine) return null;
+  const character = CHARACTER_MAP[mine.characterId];
   const showHp = stage?.id === "gunfight" || mine.hp > 0;
 
   return (
@@ -274,7 +307,22 @@ function LiveBoard({
             </span>
           ) : null}
         </div>
-        <h1 className="mt-3 text-2xl font-bold text-paper">{mine.name}</h1>
+        <h1 className="mt-3 flex flex-wrap items-center gap-2 text-2xl font-bold text-paper">
+          {mine.name}
+          {character ? (
+            <span
+              className={`rounded border px-1.5 py-0.5 text-[11px] font-normal ${DIFFICULTY_STYLE[character.difficulty]}`}
+            >
+              難度 {character.difficulty}
+            </span>
+          ) : null}
+        </h1>
+        {character ? (
+          <p className="mt-1 text-xs text-muted">
+            {character.gender}・{character.age} 歲・{character.occupation}
+            {character.note ? `・${character.note}` : ""}
+          </p>
+        ) : null}
         <p className="mt-1 text-sm text-gold-soft">
           {stage ? `第 ${stage.index} 階段・${stage.label}` : session?.stageId}
           {stage?.hint ? <span className="text-muted/70">　{stage.hint}</span> : null}
@@ -367,6 +415,29 @@ function LiveBoard({
             })}
           </ul>
         </Panel>
+
+        {character ? (
+          <Panel>
+            <details>
+              <summary className="cursor-pointer list-none text-sm font-bold tracking-[0.2em] text-gold/90 select-none">
+                我 的 角 色　
+                <span className="text-xs font-normal tracking-normal text-muted/60">
+                  （點開查看設定）
+                </span>
+              </summary>
+              <dl className="mt-3 space-y-2 text-sm">
+                <div className="flex gap-3">
+                  <dt className="w-12 shrink-0 text-xs text-muted">性格</dt>
+                  <dd className="text-paper/85">{character.personality}</dd>
+                </div>
+                <div className="flex gap-3">
+                  <dt className="w-12 shrink-0 text-xs text-muted">外貌</dt>
+                  <dd className="text-paper/85">{character.appearance}</dd>
+                </div>
+              </dl>
+            </details>
+          </Panel>
+        ) : null}
 
         <Panel>
           <PanelTitle>我 的 動 態</PanelTitle>

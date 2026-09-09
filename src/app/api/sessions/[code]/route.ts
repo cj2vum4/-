@@ -26,11 +26,17 @@ export async function GET(_req: Request, ctx: { params: Promise<{ code: string }
         stageLabel: stage?.label ?? session.stageId,
         allowJoin: stage?.allowJoin ?? false,
       },
-      // 只揭露角色名稱與難度，不含陣營等機密設定
+      // 揭露劇本的公開角色設定供選角參考，但不含真實陣營等機密
       characters: CHARACTERS.map((c) => ({
         id: c.id,
         name: c.name,
         difficulty: c.difficulty,
+        gender: c.gender,
+        age: c.age,
+        occupation: c.occupation,
+        personality: c.personality,
+        appearance: c.appearance,
+        note: c.note ?? null,
         taken: !available.has(c.id),
       })),
     });
