@@ -117,20 +117,34 @@ export function sessionToRow(m: SessionMeta): (string | number)[] {
   ];
 }
 
+const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T/;
+
+/**
+ * 讀取場次列，同時相容新舊兩種欄位配置。
+ *
+ * 舊格式（8 欄）：… 招募開放 | 主持通行碼 | 建立時間 | 更新時間
+ * 新格式（10 欄）：… 招募開放 | 彩池階段 | 彩池剩餘 | 主持通行碼 | 建立時間 | 更新時間
+ *
+ * 判斷方式：新格式第 7 欄是彩池（空字串或 "P:99,S:xxx" 這種 token），
+ * 舊格式第 7 欄則是建立時間，長得像 ISO 時間戳。
+ * 沒有這個相容處理的話，改版前建立的場次會讀到錯位的主持通行碼而進不去。
+ */
 export function rowToSession(row: unknown[]): SessionMeta | null {
   const code = str(row[0]);
   if (!code) return null;
+
+  const legacy = ISO_TIMESTAMP.test(str(row[6]));
   return {
     code,
     title: str(row[1]),
     status: (str(row[2]) || "open") as SessionMeta["status"],
     stageId: str(row[3]),
     recruitOpen: bool(row[4]),
-    poolStage: str(row[5]),
-    pool: splitList(str(row[6])),
-    hostPin: str(row[7]),
-    createdAt: str(row[8]),
-    updatedAt: str(row[9]),
+    poolStage: legacy ? "" : str(row[5]),
+    pool: legacy ? [] : splitList(str(row[6])),
+    hostPin: str(legacy ? row[5] : row[7]),
+    createdAt: str(legacy ? row[6] : row[8]),
+    updatedAt: str(legacy ? row[7] : row[9]),
   };
 }
 

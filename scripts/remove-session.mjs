@@ -1,5 +1,5 @@
 /**
- * 刪除指定場次：移除該場次的兩個分頁，並從「場次總表」刪掉對應那一列。
+ * 刪除指定場次：移除該場次的所有分頁，並從「場次總表」刪掉對應那一列。
  *
  *   node --env-file=.env.local scripts/remove-session.mjs 2026-08-16 [更多場次…]
  *
@@ -38,7 +38,7 @@ const byTitle = new Map(meta.data.sheets.map((s) => [s.properties.title, s.prope
 
 const targets = [];
 for (const code of codes) {
-  for (const suffix of ["_玩家", "_紀錄"]) {
+  for (const suffix of ["_玩家", "_紀錄", "_舉報"]) {
     const title = `${code}${suffix}`;
     if (byTitle.has(title)) targets.push({ title, sheetId: byTitle.get(title) });
   }
