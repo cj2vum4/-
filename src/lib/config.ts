@@ -85,8 +85,6 @@ export interface StageDef {
   defaultResource: ResourceKey;
   /** 進入此階段時，調配面板預設的來源類型 */
   defaultSource: LedgerSource;
-  /** 此階段常用的調整幅度，取代通用的快捷按鈕 */
-  quickDeltas: number[];
   /**
    * 其他玩家的勢力值可見程度。
    * value = 看得到確切數字；hidden = 完全看不到，連名次都沒有。
@@ -118,7 +116,6 @@ export const STAGES: StageDef[] = [
     allowJoin: true,
     defaultResource: "power",
     defaultSource: "主持人手動發放",
-    quickDeltas: [1, 5, 10],
     peerPower: "value",
     showPrestige: false,
   },
@@ -131,7 +128,6 @@ export const STAGES: StageDef[] = [
     hasLocations: true,
     defaultResource: "power",
     defaultSource: "地點小遊戲",
-    quickDeltas: [10, 20, 50, 100],
     peerPower: "value",
     showPrestige: false,
     presets: [
@@ -156,7 +152,6 @@ export const STAGES: StageDef[] = [
     hasReport: true,
     defaultResource: "prestige",
     defaultSource: "投票獎勵",
-    quickDeltas: [1, 2, 3, 5],
     peerPower: "hidden",
     showPrestige: true,
     // 第一週起招募系統自動開啟，但這一階段還不發抽取次數
@@ -178,7 +173,6 @@ export const STAGES: StageDef[] = [
     hasReport: true,
     defaultResource: "prestige",
     defaultSource: "投票獎勵",
-    quickDeltas: [1, 2, 3, 5],
     peerPower: "hidden",
     showPrestige: true,
     autoRecruit: true,
@@ -195,7 +189,6 @@ export const STAGES: StageDef[] = [
     hasReport: true,
     defaultResource: "power",
     defaultSource: "拍賣扣款",
-    quickDeltas: [100, 200, 300, 500],
     peerPower: "hidden",
     showPrestige: true,
     autoRecruit: true,
@@ -216,7 +209,6 @@ export const STAGES: StageDef[] = [
     allowJoin: false,
     defaultResource: "hp",
     defaultSource: "槍戰結算",
-    quickDeltas: [1, 2, 3],
     peerPower: "hidden",
     showPrestige: true,
     autoRecruit: true,
@@ -236,7 +228,6 @@ export const STAGES: StageDef[] = [
     allowJoin: false,
     defaultResource: "power",
     defaultSource: "系統修正",
-    quickDeltas: [10, 50, 100],
     peerPower: "hidden",
     showPrestige: true,
   },
@@ -248,8 +239,42 @@ export const STAGE_MAP: Record<string, StageDef> = Object.fromEntries(
 
 export const DEFAULT_STAGE = STAGES[0].id;
 
-/** 沒有階段預設時的通用快捷幅度 */
-export const QUICK_DELTAS = [1, 5, 10, 50, 100];
+/**
+ * 主持人調配數值的快捷幅度，依資源種類而定。
+ * 各階段的大額項目（寶箱 +800、南山武館 +2000…）由 presets 的核選方塊負責。
+ */
+export const QUICK_DELTAS: Record<ResourceKey, number[]> = {
+  power: [20, 50, 100],
+  prestige: [1, 2, 3],
+  hp: [1, 2, 3],
+};
+
+/** 玩家一次可以抽幾張 */
+export const DRAW_BATCHES = [1, 5];
+
+/**
+ * 會長就任結算的稱號，依最終勢力值排名對應。
+ * 第 1 名為會長，其餘為副會長。
+ */
+export const FINAL_TITLES = [
+  "南洋最強贏麻了",
+  "差一點稱霸南洋",
+  "差二點稱霸南洋",
+  "南洋蔬果藝專家",
+  "沒人在par的惡勢力",
+  "南洋關素impossible",
+  "南洋沒你也可以",
+];
+
+export const ORGANIZATION_NAME = "極目南洋中華商會";
+
+export function positionForRank(rank: number): string {
+  return rank === 1 ? "會長" : "副會長";
+}
+
+export function titleForRank(rank: number): string {
+  return FINAL_TITLES[rank - 1] ?? FINAL_TITLES[FINAL_TITLES.length - 1];
+}
 
 /**
  * 主持人的階段快捷核選項目。

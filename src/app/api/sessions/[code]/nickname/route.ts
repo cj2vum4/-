@@ -1,9 +1,9 @@
 import { handle, jsonOk, playerAuth, readJson, requireCode } from "@/lib/api-helpers";
-import { assertPlayer, drawRecruit } from "@/lib/game";
+import { assertPlayer, setNickname } from "@/lib/game";
 
 export const dynamic = "force-dynamic";
 
-/** 玩家抽招募，可一次抽多張 */
+/** 玩家補填或修改自己的暱稱，聘書要靠它署名 */
 export async function POST(req: Request, ctx: { params: Promise<{ code: string }> }) {
   return handle(async () => {
     const { code: raw } = await ctx.params;
@@ -11,7 +11,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const { playerId, joinCode } = playerAuth(req);
     await assertPlayer(code, playerId, joinCode);
 
-    const body = await readJson<{ times?: number }>(req).catch(() => ({ times: 1 }));
-    return jsonOk(await drawRecruit(code, playerId, Number(body.times ?? 1)));
+    const body = await readJson<{ nickname?: string }>(req);
+    return jsonOk(await setNickname(code, playerId, body.nickname ?? ""));
   });
 }

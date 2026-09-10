@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Certificate } from "@/components/certificate";
 import { CharacterPoster } from "@/components/character-poster";
 import { LogFeed } from "@/components/log-feed";
 import { AppShell, SectionTitle, ShellHeader, type TabDef } from "@/components/mobile-shell";
@@ -16,7 +17,7 @@ import {
   StatusPill,
 } from "@/components/ui";
 import { CHARACTER_MAP, DIFFICULTY_STYLE, type Difficulty } from "@/lib/characters";
-import { RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
+import { DRAW_BATCHES, RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
 import { SKILL_CARDS } from "@/lib/recruit";
 import {
   ApiError,
@@ -74,6 +75,7 @@ function CharacterPicker({
   const [characters, setCharacters] = useState<CharacterOption[] | null>(null);
   const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
+  const [nickname, setNickname] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [missing, setMissing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -106,12 +108,16 @@ function CharacterPicker({
 
   async function join() {
     if (!picked) return;
+    if (!nickname.trim()) {
+      setError("請先輸入你的暱稱");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const data = await api<{ player: PlayerIdentity }>(`/api/sessions/${code}/join`, {
         method: "POST",
-        body: JSON.stringify({ characterId: picked }),
+        body: JSON.stringify({ characterId: picked, nickname: nickname.trim() }),
       });
       savePlayerIdentity(code, data.player);
       onJoined(data.player);
@@ -150,6 +156,21 @@ function CharacterPicker({
       </header>
 
       <div className="app-scroll px-4 py-3">
+        <div className="mb-3 rounded-xl border border-gold/40 bg-gold/8 p-3">
+          <label className="block">
+            <span className="mb-1.5 block text-xs tracking-widest text-gold/85">
+              你的暱稱（會印在最後的聘書上）
+            </span>
+            <input
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="例：海星"
+              maxLength={20}
+              className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-base text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
+            />
+          </label>
+        </div>
+
         {characters === null ? (
           <p className="py-6 text-center text-sm text-muted">載入角色中…</p>
         ) : (
@@ -224,8 +245,14 @@ function CharacterPicker({
       </div>
 
       <div className="safe-bottom shrink-0 border-t border-line bg-lacquer/95 px-4 py-3">
-        <Button onClick={join} disabled={!picked || busy} className="w-full">
-          {busy ? "入場中…" : picked ? `以「${characters?.find((c) => c.id === picked)?.name}」入府` : "請先選擇角色"}
+        <Button onClick={join} disabled={!picked || !nickname.trim() || busy} className="w-full">
+          {busy
+            ? "入場中…"
+            : !nickname.trim()
+              ? "請先輸入暱稱"
+              : picked
+                ? `以「${characters?.find((c) => c.id === picked)?.name}」入府`
+                : "請選擇角色"}
         </Button>
       </div>
     </div>
@@ -243,7 +270,7 @@ function LiveBoard({
   me: PlayerIdentity;
   onReset: () => void;
 }) {
-  const { snapshot, error, loading } = usePlayerState(code, me);
+  const { snapshot, error, loading, refresh } = usePlayerState(code, me);
   const [tab, setTab] = useState("me");
 
   const session = snapshot?.session;
@@ -355,6 +382,9 @@ function LiveBoard({
     >
       {tab === "me" ? (
         <div className="space-y-3">
+          {/* 聘書發放後就置頂——這是整場遊戲的最後成果，值得第一眼看到 */}
+          {mine.certificate ? <Certificate cert={mine.certificate} /> : null}
+
           <div
             className={`grid gap-2.5 ${
               showHp && showPrestige ? "grid-cols-3" : showPrestige || showHp ? "grid-cols-2" : "grid-cols-1"
@@ -378,6 +408,13 @@ function LiveBoard({
             <SectionTitle>場 次 資 訊</SectionTitle>
             <dl className="space-y-1.5 text-sm">
               <Row label="場次" value={<CodeStamp code={code} />} />
+              <NicknameField
+                code={code}
+                me={me}
+                current={mine.nickname}
+                locked={Boolean(session?.certsIssued)}
+                onSaved={refresh}
+              />
               <Row label="階段" value={`${stage?.index}・${stage?.label}`} />
               <Row
                 label="招募"
@@ -517,6 +554,102 @@ function LiveBoard({
   );
 }
 
+/**
+ * 暱稱是聘書上的署名。
+ *
+ * 這個欄位是後來才加的，改版前入場的玩家一定是空的——沒有補填的入口他們就永遠
+ * 拿不到聘書。聘書發放後鎖住，證書上的名字不該還會變。
+ */
+function NicknameField({
+  code,
+  me,
+  current,
+  locked,
+  onSaved,
+}: {
+  code: string;
+  me: PlayerIdentity;
+  current: string;
+  locked: boolean;
+  onSaved: () => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(current);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    setError(null);
+    setBusy(true);
+    try {
+      await api(`/api/sessions/${code}/nickname`, {
+        method: "POST",
+        player: me,
+        body: JSON.stringify({ nickname: value.trim() }),
+      });
+      setEditing(false);
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "暱稱儲存失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (editing) {
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-1.5">
+          <input
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            maxLength={20}
+            placeholder="聘書上的署名"
+            className="min-w-0 flex-1 rounded border border-line bg-panel-2 px-2 py-1 text-sm text-paper outline-none focus:border-gold"
+          />
+          <Button size="sm" disabled={busy || !value.trim()} onClick={save}>
+            存
+          </Button>
+          <button
+            type="button"
+            onClick={() => {
+              setEditing(false);
+              setError(null);
+            }}
+            className="shrink-0 text-[11px] text-muted underline underline-offset-4"
+          >
+            取消
+          </button>
+        </div>
+        {error ? <p className="text-[11px] text-vermilion-soft">{error}</p> : null}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="shrink-0 text-xs text-muted">暱稱</dt>
+      <dd className="flex min-w-0 items-center justify-end gap-2">
+        <span className={`truncate ${current ? "text-paper/85" : "text-vermilion-soft"}`}>
+          {current || "尚未填寫"}
+        </span>
+        {locked ? null : (
+          <button
+            type="button"
+            onClick={() => {
+              setValue(current);
+              setEditing(true);
+            }}
+            className="shrink-0 text-[11px] text-muted underline underline-offset-4"
+          >
+            {current ? "修改" : "填寫"}
+          </button>
+        )}
+      </dd>
+    </div>
+  );
+}
+
 function StatBox({ label, value, suffix }: { label: string; value: string; suffix?: string }) {
   return (
     <div className="rounded-xl border border-line bg-panel-2/50 px-3 py-2.5 text-center">
@@ -582,6 +715,23 @@ function BoardRow({
  *
  * 舉報的判定結果刻意不當場回饋——依規則要等開啟下一階段才公布。
  */
+interface DrawResponse {
+  items: { kind: "power" | "skill"; amount?: number; card?: { name: string; description: string } }[];
+  powerGained: number;
+  drawsRemaining: number;
+  poolLeft: number;
+}
+
+/** 一次抽多張時，把整批結果講成一句話：先報勢力值總和，再列抽到的技能卡 */
+function summariseDraw(d: DrawResponse): string {
+  const parts: string[] = [];
+  if (d.powerGained > 0) parts.push(`勢力值 +${d.powerGained}`);
+  const cards = d.items.filter((i) => i.kind === "skill").map((i) => `「${i.card?.name}」`);
+  if (cards.length > 0) parts.push(`技能卡 ${cards.join("、")}`);
+  const gained = parts.length > 0 ? parts.join("，") : "沒有抽到東西";
+  return `抽了 ${d.items.length} 張：${gained}。剩餘 ${d.drawsRemaining} 次。`;
+}
+
 function PlayerActions({
   code,
   me,
@@ -618,21 +768,16 @@ function PlayerActions({
     setResult(null);
   }
 
-  async function draw() {
+  async function draw(times: number) {
     reset();
     setBusy(true);
     try {
-      const d = await api<{
-        kind: "power" | "skill";
-        amount?: number;
-        card?: { name: string; description: string };
-        drawsRemaining: number;
-      }>(`/api/sessions/${code}/recruit/draw`, { method: "POST", player: me });
-      setResult(
-        d.kind === "power"
-          ? `招募所得：勢力值 +${d.amount}。剩餘 ${d.drawsRemaining} 次。`
-          : `抽中技能卡「${d.card?.name}」——${d.card?.description}。剩餘 ${d.drawsRemaining} 次。`,
-      );
+      const d = await api<DrawResponse>(`/api/sessions/${code}/recruit/draw`, {
+        method: "POST",
+        player: me,
+        body: JSON.stringify({ times }),
+      });
+      setResult(summariseDraw(d));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "招募失敗");
     } finally {
@@ -757,14 +902,24 @@ function PlayerActions({
           </p>
         ) : (
           <>
-            <Button
-              variant="jade"
-              className="w-full"
-              disabled={busy || mine.drawsRemaining <= 0}
-              onClick={draw}
-            >
-              {mine.drawsRemaining > 0 ? `抽取一次（剩 ${mine.drawsRemaining} 次）` : "招募機會已用完"}
-            </Button>
+            {mine.drawsRemaining > 0 ? (
+              <div className="grid grid-cols-2 gap-2">
+                {DRAW_BATCHES.map((n) => (
+                  <Button
+                    key={n}
+                    variant="jade"
+                    disabled={busy || mine.drawsRemaining < n}
+                    onClick={() => draw(n)}
+                  >
+                    抽 {n} 次
+                  </Button>
+                ))}
+              </div>
+            ) : (
+              <Button variant="jade" className="w-full" disabled>
+                招募機會已用完
+              </Button>
+            )}
             <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
               {mine.drawsRemaining > 0
                 ? "可能抽到勢力值，也可能抽到技能卡。未用完的次數會在主持人切換到下一階段時自動抽完。"

@@ -85,8 +85,17 @@ const player = {
   power: 300, prestige: 9, hp: 0, drawsRemaining: 3,
   heldCards: ["w2_steal_power", "w2_gift_prestige"],
   status: "active", joinedAt: "2030-01-01T00:00:00.000Z", updatedAt: "2030-01-01T00:00:00.000Z",
+  nickname: "阿謙", certRank: 1,
 };
 check("玩家來回轉換", rowToPlayer(playerToRow(player)), player);
+
+// ---- 暱稱與聘書名次是後來追加在最後面的欄位，舊列讀起來必須是空值而不是壞掉 ----
+const legacyPlayerRow = playerToRow(player).slice(0, 15);
+const legacyPlayer = rowToPlayer(legacyPlayerRow);
+check("舊玩家列：暱稱為空", legacyPlayer.nickname, "");
+check("舊玩家列：聘書名次為 0", legacyPlayer.certRank, 0);
+check("舊玩家列：其餘欄位不受影響", legacyPlayer.heldCards, player.heldCards);
+check("舊玩家列：勢力值不受影響", legacyPlayer.power, 300);
 
 const noCards = { ...player, heldCards: [] };
 check("玩家沒有技能卡時不會變成 ['']", rowToPlayer(playerToRow(noCards)).heldCards, []);

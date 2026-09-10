@@ -25,14 +25,17 @@ import {
   EXPO_PICK_COUNT,
   LEDGER_SOURCES,
   PLAYER_COUNT_HINT,
+  QUICK_DELTAS,
   RESOURCES,
   STAGES,
   STAGE_MAP,
+  positionForRank,
+  titleForRank,
   type LedgerSource,
 } from "@/lib/config";
 import { ApiError, api, clearHostPin, loadHostPin, saveHostPin } from "@/lib/client";
 import { rankByPower, useHostState } from "@/lib/use-session-state";
-import type { ResourceKey } from "@/lib/types";
+import type { Player, ResourceKey } from "@/lib/types";
 
 export function HostConsole({ code }: { code: string }) {
   /** null = 還在讀 localStorage，"" = 需要輸入通行碼 */
@@ -125,7 +128,7 @@ function Console({
   const session = snapshot?.session;
   const stage = session ? STAGE_MAP[session.stageId] : undefined;
   const resourceDef = RESOURCES.find((r) => r.key === resource)!;
-  const quickDeltas = stage?.quickDeltas ?? [1, 5, 10, 50, 100];
+  const quickDeltas = QUICK_DELTAS[resource];
   const pendingReports = (snapshot?.reports ?? []).filter((r) => r.verdict === "");
   const pendingSettlement = (snapshot?.reports ?? []).filter(
     (r) => r.verdict !== "" && !r.settled,
@@ -696,6 +699,14 @@ function Console({
               </p>
             )}
           </Panel>
+
+          <CertificatePanel
+            players={players}
+            stageId={session?.stageId ?? ""}
+            issued={Boolean(session?.certsIssued)}
+            busy={busy}
+            onIssue={() => post("/certificates", {}, "聘書已發放", "發放聘書失敗")}
+          />
         </div>
       ) : null}
 
@@ -888,5 +899,106 @@ function Console({
         </Panel>
       ) : null}
     </AppShell>
+  );
+}
+
+/**
+ * 會長就任聘書。
+ *
+ * 依規則，第 1 名與第 2 名勢力值同分時不可自動判定會長，所以這裡先把名次與稱號
+ * 攤開讓主持人核對；同分或有人沒填暱稱時直接擋下來，不讓他按到後端才報錯。
+ */
+function CertificatePanel({
+  players,
+  stageId,
+  issued,
+  busy,
+  onIssue,
+}: {
+  players: Player[];
+  stageId: string;
+  issued: boolean;
+  busy: boolean;
+  onIssue: () => void;
+}) {
+  const isFinal = stageId === "final";
+  const ordered = [...players].sort(
+    (a, b) => b.power - a.power || a.joinedAt.localeCompare(b.joinedAt),
+  );
+  const missing = ordered.filter((p) => !p.nickname.trim());
+  const tie = ordered.length >= 2 && ordered[0].power === ordered[1].power;
+  const blocker = tie
+    ? `${ordered[0].name} 與 ${ordered[1].name} 勢力值同為 ${ordered[0].power}，請先調整再發放`
+    : missing.length > 0
+      ? `${missing.map((p) => p.name).join("、")} 沒有填暱稱，聘書無法署名`
+      : ordered.length === 0
+        ? "場上沒有玩家"
+        : "";
+
+  return (
+    <Panel className="p-3">
+      <SectionTitle
+        extra={issued ? <span className="text-[11px] text-jade-soft">已發放</span> : null}
+      >
+        會 長 就 任 聘 書
+      </SectionTitle>
+
+      {!isFinal ? (
+        <p className="text-[11px] leading-relaxed text-muted/70">
+          聘書在「會長就任結算」階段發放。切換到該階段後就能在這裡按鈕發出。
+        </p>
+      ) : (
+        <>
+          <ul className="space-y-1.5">
+            {ordered.map((p, i) => (
+              <li key={p.id} className="flex gap-2 text-xs">
+                <span className="tabular w-4 shrink-0 pt-px text-right text-muted/60">{i + 1}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-baseline gap-1.5">
+                    <span className="min-w-0 truncate">
+                      <span className="text-paper/85">{p.nickname.trim() || p.name}</span>
+                      {p.nickname.trim() ? (
+                        <span className="ml-1 text-[10px] text-muted/60">{p.name}</span>
+                      ) : (
+                        <span className="ml-1 text-[10px] text-vermilion-soft">缺暱稱</span>
+                      )}
+                    </span>
+                    <span className="tabular ml-auto shrink-0 text-muted">{p.power}</span>
+                  </span>
+                  {/* 稱號放第二行，7 個稱號長短差很多，擠在同一行一定被截掉 */}
+                  <span className="block text-[11px] leading-snug text-gold-soft">
+                    {positionForRank(i + 1)}・{titleForRank(i + 1)}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+
+          {blocker ? <p className="mt-2 text-[11px] text-vermilion-soft">{blocker}</p> : null}
+
+          <Button
+            variant="primary"
+            className="mt-2 w-full"
+            disabled={busy || Boolean(blocker)}
+            onClick={() => {
+              if (
+                !confirm(
+                  issued
+                    ? "重新發放聘書？會依目前的勢力值排名覆蓋原本的名次。"
+                    : `依目前勢力值排名發放聘書給 ${ordered.length} 名玩家？`,
+                )
+              )
+                return;
+              onIssue();
+            }}
+          >
+            {issued ? "重新發放聘書" : "發放聘書"}
+          </Button>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
+            發放後玩家在「我的」分頁就會看到自己的聘書。
+          </p>
+        </>
+      )}
+    </Panel>
   );
 }

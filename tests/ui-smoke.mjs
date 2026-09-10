@@ -103,6 +103,7 @@ try {
   await player.click('button[type="submit"]');
   await player.waitForURL(`**/player/${CODE}`, { timeout: 20000 });
   await player.waitForSelector('button:has-text("周謙")', { timeout: 20000 });
+  await player.fill('label:has-text("你的暱稱") input', "阿謙");
   await player.click('button:has-text("周謙")');
   await shot(player, "4-player-join");
   await player.click('button:has-text("入府")');
@@ -114,6 +115,7 @@ try {
     const pg = await newPage(ctx, name);
     await pg.goto(`${BASE}/player/${CODE}`, { waitUntil: "networkidle" });
     await pg.waitForSelector(`button:has-text("${name}")`, { timeout: 20000 });
+    await pg.fill('label:has-text("你的暱稱") input', `${name}的暱稱`);
     await pg.click(`button:has-text("${name}")`);
     await pg.click('button:has-text("入府")');
     await pg.waitForSelector("text=勢力排名", { timeout: 20000 });
@@ -128,28 +130,28 @@ try {
   await host.click('button:has-text("威望值")');
   await host.fill('input[placeholder^="事由"]', "完成入府考驗");
   await host.click('button:has-text("全選")');
-  await host.click('button:has-text("+10")');
-  await host.waitForSelector("text=/發放 10 威望/", { timeout: 20000 });
+  await host.click('button:has-text("+3")');
+  await host.waitForSelector("text=/發放 3 威望/", { timeout: 20000 });
 
   // 勢力值只有本人看得到，單獨發給周謙
   await host.click('button:has-text("勢力值")');
   await host.click('button:has-text("清除")');
   await host.click('li button:has-text("周謙")');
   await host.fill('input[placeholder^="事由"]', "結盟成功");
-  await host.click('button:has-text("+5")');
-  await host.waitForSelector("text=/發放 5 勢力/", { timeout: 20000 });
+  await host.click('button:has-text("+50")');
+  await host.waitForSelector("text=/發放 50 勢力/", { timeout: 20000 });
   await shot(host, "5-host-console");
   console.log("  PASS  主持人完成全體與單人發放");
 
   // ---- 6. 玩家端即時反映（輪詢 3 秒）----
   // 階段 0 不顯示威望，只驗證勢力值同步
   await player.waitForFunction(
-    () => /勢力值\s*5/.test(document.body.innerText),
+    () => /勢力值\s*50/.test(document.body.innerText),
     { timeout: 20000 },
   );
   await shot(player, "6-player-live");
   const text = await player.innerText("body");
-  check("玩家看到的勢力值", /勢力值\s*(\d+)/.exec(text)?.[1], "5");
+  check("玩家看到的勢力值", /勢力值\s*(\d+)/.exec(text)?.[1], "50");
   check("階段 0 不顯示威望", /威望/.test(text), false);
 
   // ---- 7. 階段切換同步 ----
@@ -187,6 +189,41 @@ try {
   await assertNoPageScroll(host, "主持", ["調配", "階段", "舉報", "設定", "紀錄"]);
   await shot(player, "8-player-tabs");
   await shot(host, "9-host-tabs");
+
+  // ---- 9. 會長就任：主持人發放聘書，玩家端要看得到 ----
+  await host.click('nav button:has-text("階段")');
+  await host.click('button:has-text("會長就任結算")');
+  await host.waitForSelector('button:has-text("發放聘書")', { timeout: 20000 });
+
+  // 三個人現在勢力值都不同（周謙 50、其餘 0），但同分會擋下發放，先拉開差距
+  await host.click('nav button:has-text("調配")');
+  await host.click('button:has-text("勢力值")');
+  await host.click('button:has-text("清除")');
+  await host.click('li button:has-text("沈識月")');
+  await host.click('button:has-text("+20")');
+  await host.waitForSelector("text=/發放 20 勢力/", { timeout: 20000 });
+
+  await host.click('nav button:has-text("階段")');
+  host.once("dialog", (d) => d.accept());
+  await host.click('button:has-text("發放聘書")');
+  await host.waitForSelector("text=聘書已發放", { timeout: 20000 });
+  check("主持人發放聘書", true, true);
+
+  // 周謙 50 分是第一名，聘書上要有稱號與入場時填的暱稱
+  await player.click('nav button:has-text("我的")');
+  await player.waitForFunction(
+    () => document.body.innerText.includes("聘 書"),
+    { timeout: 20000 },
+  );
+  const certText = await player.innerText("body");
+  check("聘書出現在玩家端", /聘 書/.test(certText), true);
+  check("聘書署名用入場暱稱", /阿謙/.test(certText), true);
+  check("聘書職位為會長", /會長/.test(certText), true);
+  check("聘書稱號正確", /南洋最強贏麻了/.test(certText), true);
+  await shot(player, "10-player-certificate");
+
+  // 聘書是頁面裡最高的元件，要確認它沒把導覽列擠出畫面
+  await assertNoPageScroll(player, "玩家（聘書後）", ["我的"]);
 } finally {
   await browser.close();
 }

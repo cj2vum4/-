@@ -8,8 +8,8 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
   return handle(async () => {
     const { code: raw } = await ctx.params;
     const code = requireCode(raw);
-    const body = await readJson<{ characterId?: string }>(req);
-    const player = await joinSession(code, body.characterId ?? "");
+    const body = await readJson<{ characterId?: string; nickname?: string }>(req);
+    const player = await joinSession(code, body.characterId ?? "", body.nickname ?? "");
     return jsonOk({
       player: { id: player.id, name: player.name, joinCode: player.joinCode },
     });

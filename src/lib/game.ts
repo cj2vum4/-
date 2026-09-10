@@ -15,6 +15,8 @@ import {
   LOG_TAIL,
   RESOURCE_MAP,
   STAGE_MAP,
+  positionForRank,
+  titleForRank,
   type LedgerSource,
 } from "./config";
 import { GameError } from "./errors";
@@ -27,6 +29,7 @@ import {
 } from "./recruit";
 import { getDriver } from "./store";
 import type {
+  Certificate,
   HostSnapshot,
   MyReportView,
   Report,
@@ -200,6 +203,19 @@ function makeLog(
   };
 }
 
+/** 已發放的聘書；未發放時為 null */
+function buildCertificate(player: Player, code: string): Certificate | null {
+  if (!player.certRank) return null;
+  return {
+    rank: player.certRank,
+    nickname: player.nickname,
+    characterName: player.name,
+    position: positionForRank(player.certRank),
+    title: titleForRank(player.certRank),
+    date: code,
+  };
+}
+
 /** 舉報成立並結算後，線索卡對全場公開 */
 function revealedClues(entry: CacheEntry): RevealedClue[] {
   return entry.reports
@@ -230,6 +246,7 @@ function publicMeta(s: SessionMeta): SessionPublicMeta {
     updatedAt: s.updatedAt,
     peerPower: stage?.peerPower ?? "hidden",
     showPrestige: stage?.showPrestige ?? false,
+    certsIssued: s.certsIssued,
   };
 }
 
@@ -269,6 +286,7 @@ export async function createSession(input: {
       recruitOpen: false,
       poolStage: "",
       pool: [],
+      certsIssued: false,
       hostPin: input.hostPin,
       createdAt: now,
       updatedAt: now,
@@ -399,6 +417,8 @@ export async function getPlayerSnapshot(
     hiddenBranch: me.hiddenBranch,
     drawsRemaining: me.drawsRemaining,
     heldCards: [...me.heldCards],
+    nickname: me.nickname,
+    certificate: buildCertificate(me, code),
   };
   if (showPrestige) self.prestige = me.prestige;
   // 名次會洩漏他人勢力值的相對高低，所以只在勢力值本來就公開時才給
@@ -707,7 +727,15 @@ export async function setSessionStatus(
 
 // ---------------- 玩家 ----------------
 
-export async function joinSession(code: string, characterId: string): Promise<Player> {
+export async function joinSession(
+  code: string,
+  characterId: string,
+  nickname: string,
+): Promise<Player> {
+  const nick = nickname.trim();
+  if (!nick) throw new GameError("BAD_REQUEST", "請輸入你的暱稱");
+  if (nick.length > 20) throw new GameError("BAD_REQUEST", "暱稱請控制在 20 字以內");
+
   const character = CHARACTER_MAP[characterId];
   if (!character) throw new GameError("BAD_REQUEST", "沒有這個角色");
 
@@ -744,12 +772,14 @@ export async function joinSession(code: string, characterId: string): Promise<Pl
       status: "active",
       joinedAt: now,
       updatedAt: now,
+      nickname: nick,
+      certRank: 0,
     };
     const log = makeLog({
       type: "join",
       playerId: player.id,
       playerName: player.name,
-      reason: "入府報到",
+      reason: `入府報到（${nick}）`,
       operator: "系統",
       publicVisible: true,
     });
@@ -760,6 +790,37 @@ export async function joinSession(code: string, characterId: string): Promise<Pl
     entry.players.push(player);
     pushLog(entry, log);
     return player;
+  });
+}
+
+/**
+ * 玩家補填或修改自己的暱稱。
+ *
+ * 暱稱是新加的欄位，改版前入場的玩家一定是空的；沒有這個入口他們就永遠拿不到聘書。
+ * 聘書發放後不再開放修改，免得證書上的名字跟紀錄對不起來。
+ */
+export async function setNickname(
+  code: string,
+  playerId: string,
+  nickname: string,
+): Promise<{ nickname: string }> {
+  const nick = nickname.trim();
+  if (!nick) throw new GameError("BAD_REQUEST", "請輸入你的暱稱");
+  if (nick.length > 20) throw new GameError("BAD_REQUEST", "暱稱請控制在 20 字以內");
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const player = entry.players.find((p) => p.id === playerId && p.status === "active");
+    if (!player) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
+    if (entry.session.certsIssued) {
+      throw new GameError("BAD_REQUEST", "聘書已經發放，暱稱不能再改了");
+    }
+    if (player.nickname === nick) return { nickname: nick };
+
+    const next: Player = { ...player, nickname: nick, updatedAt: new Date().toISOString() };
+    await getDriver().savePlayers(code, [next]);
+    Object.assign(player, next);
+    return { nickname: nick };
   });
 }
 
@@ -1154,18 +1215,31 @@ export async function transferPower(
 
 // ---------------- 招募抽取與技能卡 ----------------
 
-export interface DrawResult {
+export interface DrawItem {
   kind: "power" | "skill";
   /** 抽到勢力值時的點數 */
   amount?: number;
   /** 抽到技能卡時的資訊 */
   card?: { id: string; name: string; description: string };
+}
+
+export interface DrawResult {
+  items: DrawItem[];
+  /** 這一批抽到的勢力值總和 */
+  powerGained: number;
   drawsRemaining: number;
   poolLeft: number;
 }
 
-/** 玩家抽一次招募 */
-export async function drawRecruit(code: string, playerId: string): Promise<DrawResult> {
+/** 玩家抽招募，一次可抽多張 */
+export async function drawRecruit(
+  code: string,
+  playerId: string,
+  times = 1,
+): Promise<DrawResult> {
+  if (!Number.isInteger(times) || times < 1 || times > 10) {
+    throw new GameError("BAD_REQUEST", "一次只能抽 1 到 10 張");
+  }
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
     const stage = STAGE_MAP[entry.session.stageId];
@@ -1182,10 +1256,30 @@ export async function drawRecruit(code: string, playerId: string): Promise<DrawR
       throw new GameError("BAD_REQUEST", "本階段的招募彩池已經抽完");
     }
 
-    // 先讀出這次會抽到什麼，applyDraw 會把它從彩池取走
-    const token = entry.session.pool[0];
-    const parsed = parseToken(token);
-    const logs = applyDraw(entry, player);
+    // 抽到沒次數或彩池見底就停，不足的部分不算錯誤
+    const rounds = Math.min(times, player.drawsRemaining, entry.session.pool.length);
+    const items: DrawItem[] = [];
+    const logs: LogEntry[] = [];
+    let powerGained = 0;
+
+    for (let i = 0; i < rounds; i++) {
+      // 先讀出這次會抽到什麼，applyDraw 會把它從彩池取走
+      const parsed = parseToken(entry.session.pool[0]);
+      logs.push(...applyDraw(entry, player));
+      if (parsed?.kind === "power") {
+        powerGained += parsed.amount;
+        items.push({ kind: "power", amount: parsed.amount });
+      } else if (parsed?.kind === "skill") {
+        items.push({
+          kind: "skill",
+          card: {
+            id: parsed.card.id,
+            name: parsed.card.name,
+            description: parsed.card.description,
+          },
+        });
+      }
+    }
 
     // 玩家餘額與紀錄即時寫入；彩池合併延後，省下三分之一的寫入次數
     await Promise.all([
@@ -1196,19 +1290,70 @@ export async function drawRecruit(code: string, playerId: string): Promise<DrawR
     pushLog(entry, ...logs);
 
     return {
-      kind: parsed?.kind === "skill" ? "skill" : "power",
-      amount: parsed?.kind === "power" ? parsed.amount : undefined,
-      card:
-        parsed?.kind === "skill"
-          ? {
-              id: parsed.card.id,
-              name: parsed.card.name,
-              description: parsed.card.description,
-            }
-          : undefined,
+      items,
+      powerGained,
       drawsRemaining: player.drawsRemaining,
       poolLeft: entry.session.pool.length,
     };
+  });
+}
+
+/**
+ * 發放會長就任聘書。依最終勢力值排名決定職位與稱號。
+ *
+ * 依規則，第 1 名與第 2 名同分時不可自動判定會長，必須由主持人先處理，
+ * 所以這裡會擋下來而不是自行選一個。
+ */
+export async function issueCertificates(code: string): Promise<{ issued: number }> {
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const active = entry.players.filter((p) => p.status === "active");
+    if (active.length === 0) throw new GameError("PLAYER_NOT_FOUND", "場上沒有玩家");
+
+    const missing = active.filter((p) => !p.nickname.trim());
+    if (missing.length > 0) {
+      throw new GameError(
+        "BAD_REQUEST",
+        `${missing.map((p) => p.name).join("、")} 沒有填暱稱，聘書無法署名`,
+      );
+    }
+
+    const ordered = [...active].sort(
+      (a, b) => b.power - a.power || a.joinedAt.localeCompare(b.joinedAt),
+    );
+    if (ordered.length >= 2 && ordered[0].power === ordered[1].power) {
+      throw new GameError(
+        "BAD_REQUEST",
+        `${ordered[0].name} 與 ${ordered[1].name} 勢力值同為 ${ordered[0].power}，` +
+          "無法自動判定會長，請先調整後再發放",
+      );
+    }
+
+    const now = new Date().toISOString();
+    const logs: LogEntry[] = ordered.map((player, i) => {
+      const rank = i + 1;
+      player.certRank = rank;
+      player.updatedAt = now;
+      return makeLog({
+        type: "cert",
+        playerId: player.id,
+        playerName: player.name,
+        reason: `第 ${rank} 名・${positionForRank(rank)}・${titleForRank(rank)}`,
+        operator: "主持人",
+        publicVisible: true,
+      });
+    });
+
+    entry.session.certsIssued = true;
+    entry.session.updatedAt = now;
+
+    cancelScheduledSessionSave(code);
+    await getDriver().saveSession(entry.session);
+    await getDriver().savePlayers(code, ordered);
+    await getDriver().appendLogs(code, logs);
+    pushLog(entry, ...logs);
+
+    return { issued: ordered.length };
   });
 }
 

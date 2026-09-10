@@ -11,7 +11,9 @@
     "check:sheets": "node --env-file=.env.local scripts/check-sheets.mjs",
     "session:remove": "node --env-file=.env.local scripts/remove-session.mjs",
     "build:only": "next build",
-    "migrate:sessions": "node --env-file=.env.local scripts/migrate-sessions.mjs"
+    "migrate:sessions": "node --env-file=.env.local scripts/migrate-sessions.mjs",
+    "test:api": "node tests/certificate.test.mjs",
+    "test:ui": "node tests/ui-smoke.mjs"
   },
   "dependencies": {
     "googleapis": "^174.0.1",

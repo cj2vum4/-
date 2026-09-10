@@ -37,6 +37,8 @@ export interface SessionMeta {
   poolStage: string;
   /** 剩餘的彩池牌堆，見 recruit.ts 的 PoolToken */
   pool: string[];
+  /** 聘書是否已發放 */
+  certsIssued: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -67,6 +69,21 @@ export interface Player {
   status: PlayerStatus;
   joinedAt: string;
   updatedAt: string;
+  /** 玩家本人的暱稱（不是角色名），聘書上印的是這個 */
+  nickname: string;
+  /** 聘書上的名次；0 代表還沒發放 */
+  certRank: number;
+}
+
+/** 會長就任聘書 */
+export interface Certificate {
+  rank: number;
+  nickname: string;
+  characterName: string;
+  position: string;
+  title: string;
+  /** 場次日期（YYYY-MM-DD）。用場次而不是寫入時間，聘書上的日期才不會被後續改值帶著跑 */
+  date: string;
 }
 
 /**
@@ -104,6 +121,7 @@ export type LogType =
   | "report"
   | "recruit"
   | "skill"
+  | "cert"
   | "note";
 
 /** append-only 流水帳，永不覆寫，方便事後對帳與爭議追溯 */
@@ -155,6 +173,9 @@ export interface SelfPlayerView {
   hiddenBranch: HiddenBranch | "";
   drawsRemaining: number;
   heldCards: string[];
+  nickname: string;
+  /** 已發放的聘書；未發放時為 null */
+  certificate: Certificate | null;
 }
 
 /**
@@ -187,6 +208,7 @@ export interface SessionPublicMeta {
   /** 這兩個旗標讓前端知道這一階段該顯示什麼，不必自己再查一次階段表 */
   peerPower: "value" | "hidden";
   showPrestige: boolean;
+  certsIssued: boolean;
 }
 
 /** 玩家端輪詢拿到的內容 */

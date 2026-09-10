@@ -48,8 +48,9 @@ export const SESSION_HEADERS = [
   "主持通行碼",
   "建立時間",
   "更新時間",
+  "聘書已發放",
 ];
-export const SESSION_LAST_COL = "J";
+export const SESSION_LAST_COL = "K";
 
 export const PLAYER_HEADERS = [
   "玩家代碼",
@@ -67,8 +68,10 @@ export const PLAYER_HEADERS = [
   "狀態",
   "加入時間",
   "更新時間",
+  "暱稱",
+  "聘書名次",
 ];
-export const PLAYER_LAST_COL = "O";
+export const PLAYER_LAST_COL = "Q";
 
 export const REPORT_HEADERS = [
   "舉報代碼",
@@ -114,6 +117,7 @@ export function sessionToRow(m: SessionMeta): (string | number)[] {
     m.hostPin,
     m.createdAt,
     m.updatedAt,
+    m.certsIssued ? "是" : "否",
   ];
 }
 
@@ -147,6 +151,8 @@ export function rowToSession(row: unknown[]): SessionMeta | null {
     hostPin: str(legacy ? row[5] : row[7]),
     createdAt: str(legacy ? row[6] : row[8]),
     updatedAt: str(legacy ? row[7] : row[9]),
+    // 後來追加的欄位，舊資料沒有值
+    certsIssued: legacy ? false : bool(row[10]),
   };
 }
 
@@ -167,6 +173,8 @@ export function playerToRow(p: Player): (string | number)[] {
     p.status,
     p.joinedAt,
     p.updatedAt,
+    p.nickname,
+    p.certRank,
   ];
 }
 
@@ -191,6 +199,9 @@ export function rowToPlayer(row: unknown[]): Player | null {
     status: (str(row[12]) || "active") as Player["status"],
     joinedAt: str(row[13]),
     updatedAt: str(row[14]),
+    // 以下為後來追加的欄位，舊資料沒有值，會落成空字串與 0
+    nickname: str(row[15]),
+    certRank: num(row[16]),
   };
 }
 
