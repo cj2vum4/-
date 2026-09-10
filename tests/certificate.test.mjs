@@ -5,40 +5,14 @@
  *   GOOGLE_SHEETS_SPREADSHEET_ID= GOOGLE_SERVICE_ACCOUNT_JSON= npx next start -p 3100
  *   node tests/certificate.test.mjs
  */
-const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3100";
-const PIN = "8888";
+import { asPlayer, call, hostHeaders, makeChecker, openSession } from "./helpers.mjs";
 
-let failed = 0;
-function check(label, actual, expected) {
-  const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  if (!ok) failed++;
-  console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
-  if (!ok) console.log(`        實際 ${JSON.stringify(actual)}\n        預期 ${JSON.stringify(expected)}`);
-}
-function ok(label, cond, detail = "") {
-  if (!cond) failed++;
-  console.log(`  ${cond ? "PASS" : "FAIL"}  ${label}${cond ? "" : `\n        ${detail}`}`);
-}
+const { check, ok, done } = makeChecker();
 
-async function call(path, { method = "GET", headers = {}, body } = {}) {
-  const res = await fetch(`${BASE}/api/sessions${path}`, {
-    method,
-    headers: { "content-type": "application/json", ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const json = await res.json().catch(() => ({}));
-  return { status: res.status, json };
-}
-
-const host = { "x-host-pin": PIN };
-const asPlayer = (p) => ({ "x-player-id": p.id, "x-join-code": p.joinCode });
-
-const CODE = `2031-0${1 + Math.floor(Math.random() * 9)}-1${Math.floor(Math.random() * 9)}`;
+const { code: CODE, password: PW } = await openSession();
 console.log(`使用場次 ${CODE}`);
-
-// ---- 開場 ----
-const created = await call("", { method: "POST", body: { date: CODE, hostPin: PIN } });
-ok("主持人開場", created.status === 200, JSON.stringify(created.json));
+const host = hostHeaders(PW);
+ok("主持人開場", Boolean(CODE), CODE);
 
 // ---- 入場一定要有暱稱 ----
 const noNick = await call(`/${CODE}/join`, {
@@ -179,32 +153,31 @@ const lateRename = await call(`/${CODE}/nickname`, {
 ok("聘書發放後不能改暱稱", lateRename.status >= 400, `HTTP ${lateRename.status}`);
 
 // ---- 同分時擋下來，不自行判定會長 ----
-const TIE = `2032-03-0${1 + Math.floor(Math.random() * 8)}`;
-await call("", { method: "POST", body: { date: TIE, hostPin: PIN } });
+const { code: TIE, password: TIE_PW } = await openSession();
+const tieHost = hostHeaders(TIE_PW);
 const tiePlayers = [];
 for (const [characterId, nickname] of [["zhouqian", "甲"], ["shenshiyue", "乙"]]) {
   const r = await call(`/${TIE}/join`, { method: "POST", body: { characterId, nickname } });
   tiePlayers.push(r.json.player ?? r.json);
 }
-await call(`/${TIE}/stage`, { method: "POST", headers: host, body: { stageId: "final" } });
+await call(`/${TIE}/stage`, { method: "POST", headers: tieHost, body: { stageId: "final" } });
 for (const p of tiePlayers) {
   await call(`/${TIE}/grant`, {
     method: "POST",
-    headers: host,
+    headers: tieHost,
     body: { playerIds: [p.id], resource: "power", delta: 777 },
   });
 }
-const tieRes = await call(`/${TIE}/certificates`, { method: "POST", headers: host });
+const tieRes = await call(`/${TIE}/certificates`, { method: "POST", headers: tieHost });
 ok("第一二名同分時擋下發放", tieRes.status >= 400, `HTTP ${tieRes.status}`);
 ok("同分錯誤訊息說得清楚", String(tieRes.json.message ?? "").includes("無法自動判定會長"),
   JSON.stringify(tieRes.json));
 
 // ---- 沒填暱稱擋下發放（用舊資料模擬：直接建一場，改成空暱稱做不到，改用未入場檢查） ----
-const EMPTY = `2033-04-0${1 + Math.floor(Math.random() * 8)}`;
-await call("", { method: "POST", body: { date: EMPTY, hostPin: PIN } });
-await call(`/${EMPTY}/stage`, { method: "POST", headers: host, body: { stageId: "final" } });
-const emptyRes = await call(`/${EMPTY}/certificates`, { method: "POST", headers: host });
+const { code: EMPTY, password: EMPTY_PW } = await openSession();
+const emptyHost = hostHeaders(EMPTY_PW);
+await call(`/${EMPTY}/stage`, { method: "POST", headers: emptyHost, body: { stageId: "final" } });
+const emptyRes = await call(`/${EMPTY}/certificates`, { method: "POST", headers: emptyHost });
 ok("沒有玩家時擋下發放", emptyRes.status >= 400, `HTTP ${emptyRes.status}`);
 
-console.log(failed === 0 ? "\n聘書與招募測試全部通過" : `\n${failed} 個案例失敗`);
-process.exit(failed === 0 ? 0 : 1);
+done("聘書與招募測試");

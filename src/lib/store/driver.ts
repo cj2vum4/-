@@ -29,6 +29,17 @@ export interface StoreDriver {
   listLog(code: string, limit: number): Promise<LogEntry[]>;
   /** 一次補上多筆紀錄，同樣是為了避免逐筆往返 */
   appendLogs(code: string, entries: LogEntry[]): Promise<void>;
+
+  /**
+   * 封存：把該場次的三個工作分頁彙整成一個以場次代碼命名的分頁，然後刪掉工作分頁。
+   * 場次一多，每場三個分頁很快就看不完，收成一個才找得到東西。
+   */
+  archiveSession(code: string, sheet: ArchiveSheet): Promise<void>;
+}
+
+/** 封存分頁的內容，已排好版，driver 只負責寫進去 */
+export interface ArchiveSheet {
+  rows: (string | number)[][];
 }
 
 /** 分頁名稱規則：一個場次 = 兩個分頁 */
@@ -36,6 +47,8 @@ export const sessionsTabName = () => "場次總表";
 export const playersTabName = (code: string) => `${code}_玩家`;
 export const logTabName = (code: string) => `${code}_紀錄`;
 export const reportsTabName = (code: string) => `${code}_舉報`;
+/** 封存後的彙整分頁，名稱就是場次代碼（也就是當天日期） */
+export const archiveTabName = (code: string) => code;
 
 export const SESSION_HEADERS = [
   "場次代碼",
@@ -45,12 +58,13 @@ export const SESSION_HEADERS = [
   "招募開放",
   "彩池階段",
   "彩池剩餘",
-  "主持通行碼",
+  "開場密碼",
   "建立時間",
   "更新時間",
   "聘書已發放",
+  "已封存",
 ];
-export const SESSION_LAST_COL = "K";
+export const SESSION_LAST_COL = "L";
 
 export const PLAYER_HEADERS = [
   "玩家代碼",
@@ -114,10 +128,11 @@ export function sessionToRow(m: SessionMeta): (string | number)[] {
     m.recruitOpen ? "是" : "否",
     m.poolStage,
     m.pool.join(","),
-    m.hostPin,
+    m.password,
     m.createdAt,
     m.updatedAt,
     m.certsIssued ? "是" : "否",
+    m.archived ? "是" : "否",
   ];
 }
 
@@ -148,11 +163,12 @@ export function rowToSession(row: unknown[]): SessionMeta | null {
     recruitOpen: bool(row[4]),
     poolStage: legacy ? "" : str(row[5]),
     pool: legacy ? [] : splitList(str(row[6])),
-    hostPin: str(legacy ? row[5] : row[7]),
+    password: str(legacy ? row[5] : row[7]),
     createdAt: str(legacy ? row[6] : row[8]),
     updatedAt: str(legacy ? row[7] : row[9]),
     // 後來追加的欄位，舊資料沒有值
     certsIssued: legacy ? false : bool(row[10]),
+    archived: legacy ? false : bool(row[11]),
   };
 }
 

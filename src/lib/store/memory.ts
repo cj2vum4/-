@@ -1,11 +1,13 @@
 import type { LogEntry, Player, Report, SessionMeta } from "../types";
-import type { StoreDriver } from "./driver";
+import type { ArchiveSheet, StoreDriver } from "./driver";
 
 interface Bucket {
   meta: SessionMeta;
   players: Player[];
   reports: Report[];
   log: LogEntry[];
+  /** 封存後的彙整內容，對應 Sheets 的彙整分頁 */
+  archive?: (string | number)[][];
 }
 
 /**
@@ -82,5 +84,15 @@ export class MemoryDriver implements StoreDriver {
   async appendLogs(code: string, entries: LogEntry[]): Promise<void> {
     const log = buckets.get(code)?.log;
     if (log) log.push(...entries.map((e) => ({ ...e })));
+  }
+
+  /** 記憶體版的封存：留下彙整內容，清掉工作資料，對應 Sheets 刪分頁 */
+  async archiveSession(code: string, sheet: ArchiveSheet): Promise<void> {
+    const bucket = buckets.get(code);
+    if (!bucket) return;
+    bucket.archive = sheet.rows.map((r) => [...r]);
+    bucket.players = [];
+    bucket.reports = [];
+    bucket.log = [];
   }
 }

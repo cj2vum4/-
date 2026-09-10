@@ -145,11 +145,15 @@ async function loadEntry(code: string): Promise<CacheEntry> {
     throw new GameError("SESSION_NOT_FOUND", "無此場次");
   }
 
-  const [players, reports, log] = await Promise.all([
-    driver.listPlayers(code),
-    driver.listReports(code).catch(() => [] as Report[]),
-    driver.listLog(code, LOG_TAIL),
-  ]);
+  // 已封存的場次三個工作分頁都刪了。這裡若照常去讀，ensureTab 會把空分頁
+  // 重新建回來，看起來就像資料被清空——所以直接回空的，不碰儲存層。
+  const [players, reports, log] = session.archived
+    ? [[] as Player[], [] as Report[], [] as LogEntry[]]
+    : await Promise.all([
+        driver.listPlayers(code),
+        driver.listReports(code).catch(() => [] as Report[]),
+        driver.listLog(code, LOG_TAIL),
+      ]);
 
   const entry: CacheEntry = {
     session,
@@ -268,34 +272,71 @@ function powerRanks(players: Player[]): Map<string, number> {
 
 // ---------------- 場次 ----------------
 
-export async function createSession(input: {
-  code: string;
-  title?: string;
-  hostPin: string;
-}): Promise<SessionMeta> {
-  return withLock(input.code, async () => {
-    const driver = getDriver();
-    if (await driver.getSession(input.code)) {
-      throw new GameError("SESSION_EXISTS", `場次 ${input.code} 已經開過了，請直接進入`);
-    }
+/** 今天的日期，YYYY-MM-DD */
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate(),
+  ).padStart(2, "0")}`;
+}
 
+/**
+ * 產生場次代碼：當天日期，同一天開第二場就加序號。
+ *
+ * 這個代碼同時是封存後的分頁名稱，所以「一天一場」時分頁名就是乾淨的日期。
+ */
+function nextCode(existing: Set<string>): string {
+  const base = today();
+  if (!existing.has(base)) return base;
+  for (let i = 2; i < 100; i++) {
+    const candidate = `${base}-${i}`;
+    if (!existing.has(candidate)) return candidate;
+  }
+  throw new GameError("BAD_REQUEST", "今天開的場次太多了");
+}
+
+export async function createSession(input: {
+  password: string;
+  title?: string;
+}): Promise<SessionMeta> {
+  const password = input.password.trim();
+  if (password.length < 4) {
+    throw new GameError("BAD_REQUEST", "開場密碼至少 4 個字，玩家要用同一組進場");
+  }
+  if (password.length > 30) {
+    throw new GameError("BAD_REQUEST", "開場密碼請控制在 30 字以內");
+  }
+
+  const driver = getDriver();
+  const all = await driver.listSessions();
+
+  // 同一組密碼不能同時有兩場還開著，否則玩家不知道會進到哪一場
+  const clash = all.find((s) => !s.archived && s.status !== "closed" && s.password === password);
+  if (clash) {
+    throw new GameError("SESSION_EXISTS", "這組密碼已經有一場正在進行，請換一組");
+  }
+
+  const code = nextCode(new Set(all.map((s) => s.code)));
+
+  return withLock(code, async () => {
     const now = new Date().toISOString();
     const meta: SessionMeta = {
-      code: input.code,
-      title: input.title?.trim() || `${input.code} 場次`,
+      code,
+      title: input.title?.trim() || `${code} 場次`,
       status: "open",
       stageId: DEFAULT_STAGE,
       recruitOpen: false,
       poolStage: "",
       pool: [],
       certsIssued: false,
-      hostPin: input.hostPin,
+      archived: false,
+      password,
       createdAt: now,
       updatedAt: now,
     };
 
     await driver.createSession(meta);
-    await driver.appendLogs(input.code, [
+    await driver.appendLogs(code, [
       makeLog({
         type: "session",
         reason: `開啟場次「${meta.title}」`,
@@ -304,20 +345,40 @@ export async function createSession(input: {
       }),
     ]);
 
-    cache.delete(input.code);
-    await loadEntry(input.code);
+    cache.delete(code);
+    await loadEntry(code);
     return meta;
   });
 }
 
-/** 玩家輸入場次時用的檢查，找不到就是「無此場次」 */
-export async function findSession(code: string): Promise<SessionMeta> {
-  return (await getEntry(code)).session;
+/**
+ * 用開場密碼找場次。玩家與主持人都走這裡。
+ *
+ * 只認還開著的場次：已結束或已封存的場次，密碼就失效了，
+ * 不然隔週用同一組密碼會誤入上一場。
+ */
+export async function findByPassword(password: string): Promise<SessionMeta> {
+  const pw = (password ?? "").trim();
+  if (!pw) throw new GameError("BAD_REQUEST", "請輸入開場密碼");
+
+  const all = await getDriver().listSessions();
+  const hit = all.find((s) => s.password === pw && !s.archived && s.status !== "closed");
+  if (!hit) throw new GameError("SESSION_NOT_FOUND", "無此場次");
+  return hit;
 }
 
-export async function listSessions(): Promise<Array<Omit<SessionMeta, "hostPin">>> {
+/** 玩家輸入場次時用的檢查，找不到就是「無此場次」 */
+export async function findSession(code: string): Promise<SessionMeta> {
+  const session = (await getEntry(code)).session;
+  if (session.archived) {
+    throw new GameError("SESSION_NOT_FOUND", "本場次已封存，資料在試算表的彙整分頁");
+  }
+  return session;
+}
+
+export async function listSessions(): Promise<Array<Omit<SessionMeta, "password">>> {
   const all = await getDriver().listSessions();
-  return all.map(({ hostPin: _hostPin, ...rest }) => rest);
+  return all.map(({ password: _password, ...rest }) => rest);
 }
 
 /** 哪些角色還沒被選走 */
@@ -329,10 +390,19 @@ export async function availableCharacters(code: string): Promise<string[]> {
   return Object.keys(CHARACTER_MAP).filter((id) => !taken.has(id));
 }
 
+/**
+ * 主持人驗證。目前用的是開場密碼——跟玩家同一組（依需求簡化）。
+ *
+ * ⚠️ 這代表知道密碼的玩家也進得了主持台。若要分開，這裡改比對
+ * session.hostPin 即可，呼叫端一律不用動。
+ */
 export async function assertHost(code: string, pin: string): Promise<SessionMeta> {
   const entry = await getEntry(code);
-  if (!pin || entry.session.hostPin !== pin) {
-    throw new GameError("UNAUTHORIZED", "主持通行碼不正確");
+  if (entry.session.archived) {
+    throw new GameError("SESSION_NOT_FOUND", "本場次已封存，無法再操作");
+  }
+  if (!pin || entry.session.password !== pin) {
+    throw new GameError("UNAUTHORIZED", "開場密碼不正確");
   }
   return entry.session;
 }
@@ -737,6 +807,10 @@ export async function setSessionStatus(
 ): Promise<SessionMeta> {
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
+    if (entry.session.archived) {
+      throw new GameError("BAD_REQUEST", "本場次已封存，不能再改狀態");
+    }
+
     const next: SessionMeta = {
       ...entry.session,
       status,
@@ -755,8 +829,121 @@ export async function setSessionStatus(
 
     entry.session = next;
     pushLog(entry, log);
-    return next;
+
+    // 結束就順手收攤：三個工作分頁彙整成一個以日期命名的分頁再刪掉。
+    // 場次一多，每場三個分頁很快就找不到東西。
+    if (status === "closed") {
+      await archiveLocked(entry);
+    }
+    return entry.session;
   });
+}
+
+/**
+ * 封存。只能在鎖內呼叫。
+ *
+ * 先把完整內容排版好寫進彙整分頁，成功了才刪工作分頁——中途失敗最多是多一個
+ * 分頁，不會弄丟資料。
+ */
+async function archiveLocked(entry: CacheEntry): Promise<void> {
+  const code = entry.session.code;
+
+  // 流水帳的快取只留最近 LOG_TAIL 筆，封存要完整的，所以重讀一次
+  const fullLog = await getDriver()
+    .listLog(code, Number.MAX_SAFE_INTEGER)
+    .catch(() => entry.log);
+
+  await getDriver().archiveSession(code, {
+    rows: buildArchiveRows(entry, fullLog),
+  });
+
+  const next: SessionMeta = {
+    ...entry.session,
+    archived: true,
+    updatedAt: new Date().toISOString(),
+  };
+  await getDriver().saveSession(next);
+
+  entry.session = next;
+  entry.players = [];
+  entry.reports = [];
+  entry.log = [];
+}
+
+/** 把一場的所有資料排成一張表。分區塊，人看得懂為主。 */
+function buildArchiveRows(entry: CacheEntry, log: LogEntry[]): (string | number)[][] {
+  const { session, players, reports } = entry;
+  const stage = STAGE_MAP[session.stageId];
+  const rows: (string | number)[][] = [
+    ["場次", session.code],
+    ["名稱", session.title],
+    ["開場密碼", session.password],
+    ["最終階段", stage ? `${stage.index}・${stage.label}` : session.stageId],
+    ["建立時間", session.createdAt],
+    ["結束時間", session.updatedAt],
+    [],
+    ["【玩家】"],
+    [
+      "玩家代碼", "角色", "暱稱", "聘書名次", "職位", "稱號",
+      "真實陣營", "隱藏分支", "勢力值", "威望值", "血量", "狀態", "加入時間",
+    ],
+  ];
+
+  const ordered = [...players].sort(
+    (a, b) => (a.certRank || 99) - (b.certRank || 99) || b.power - a.power,
+  );
+  for (const p of ordered) {
+    rows.push([
+      p.id,
+      p.name,
+      p.nickname,
+      p.certRank || "",
+      p.certRank ? positionForRank(p.certRank) : "",
+      p.certRank ? titleForRank(p.certRank) : "",
+      p.faction,
+      p.hiddenBranch,
+      p.power,
+      p.prestige,
+      p.hp,
+      p.status,
+      p.joinedAt,
+    ]);
+  }
+
+  rows.push([], ["【舉報】"]);
+  if (reports.length === 0) {
+    rows.push(["（無）"]);
+  } else {
+    rows.push(["時間", "舉報人", "被舉報人", "線索卡", "判定", "已生效"]);
+    for (const r of reports) {
+      rows.push([
+        r.ts,
+        r.reporterName,
+        r.targetName,
+        r.clueCode,
+        r.verdict === "success" ? "成立" : r.verdict === "fail" ? "不成立" : "未判定",
+        r.settled ? "是" : "否",
+      ]);
+    }
+  }
+
+  rows.push([], ["【流水帳】"]);
+  rows.push(["時間", "類型", "角色", "資源", "變動", "變動後", "來源", "事由", "操作者"]);
+  for (const e of log) {
+    rows.push([
+      e.ts,
+      e.type,
+      e.playerName,
+      e.resource,
+      e.delta,
+      e.balanceAfter,
+      e.source,
+      e.reason,
+      e.operator,
+    ]);
+  }
+
+  return rows;
 }
 
 // ---------------- 玩家 ----------------

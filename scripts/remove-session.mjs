@@ -15,9 +15,10 @@ if (codes.length === 0) {
   process.exit(1);
 }
 
-const bad = codes.filter((c) => !/^\d{4}-\d{2}-\d{2}$/.test(c));
+// 場次代碼是當天日期；同一天第二場會加序號，例如 2026-09-11-2
+const bad = codes.filter((c) => !/^\d{4}-\d{2}-\d{2}(-\d{1,2})?$/.test(c));
 if (bad.length) {
-  console.error(`場次代碼格式須為 YYYY-MM-DD：${bad.join("、")}`);
+  console.error(`場次代碼格式須為 YYYY-MM-DD 或 YYYY-MM-DD-2：${bad.join("、")}`);
   process.exit(1);
 }
 
@@ -38,8 +39,8 @@ const byTitle = new Map(meta.data.sheets.map((s) => [s.properties.title, s.prope
 
 const targets = [];
 for (const code of codes) {
-  for (const suffix of ["_玩家", "_紀錄", "_舉報"]) {
-    const title = `${code}${suffix}`;
+  // 三個工作分頁，加上封存後的彙整分頁（名稱就是場次代碼本身）
+  for (const title of [`${code}_玩家`, `${code}_紀錄`, `${code}_舉報`, code]) {
     if (byTitle.has(title)) targets.push({ title, sheetId: byTitle.get(title) });
   }
 }

@@ -9,7 +9,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const { code: raw } = await ctx.params;
     const code = requireCode(raw);
     const session = await assertHost(code, hostPin(req));
-    const { hostPin: _hidden, ...safe } = session;
+    const { password: _hidden, ...safe } = session;
     return jsonOk({ session: safe });
   });
 }

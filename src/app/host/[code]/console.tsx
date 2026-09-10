@@ -84,13 +84,13 @@ function PinGate({ code, onPass }: { code: string; onPass: (pin: string) => void
       <header className="mt-6 mb-5">
         <h1 className="text-xl font-bold text-paper">主持台驗證</h1>
         <p className="mt-1.5 text-sm text-muted">
-          場次 <CodeStamp code={code} /> 需要主持通行碼才能進入。
+          場次 <CodeStamp code={code} /> 需要開場密碼才能進入。
         </p>
       </header>
       <Panel>
         <form onSubmit={submit} className="space-y-4">
           <Field
-            label="主持通行碼"
+            label="開場密碼"
             type="password"
             value={value}
             onChange={(e) => setValue(e.target.value)}
@@ -906,7 +906,15 @@ function Console({
                   variant={st === "closed" ? "danger" : "ghost"}
                   disabled={busy || session?.status === st}
                   onClick={() => {
-                    if (st === "closed" && !confirm("確定要結束本場次嗎？結束後就不能再調配數值。"))
+                    if (
+                      st === "closed" &&
+                      !confirm(
+                        "確定要結束本場次嗎？\n\n" +
+                          `結束後會把這一場的資料彙整成試算表裡的「${code}」分頁，` +
+                          "並刪掉玩家／紀錄／舉報三個工作分頁。\n" +
+                          "封存後就不能再進場或調配數值了。",
+                      )
+                    )
                       return;
                     void post("/status", { status: st }, "", "更新場次狀態失敗");
                   }}
@@ -916,7 +924,10 @@ function Console({
               ))}
             </div>
             <p className="mt-2.5 text-[11px] leading-relaxed text-muted/70">
-              玩家入場：首頁 →「我是玩家」→ 輸入 <b className="text-gold-soft">{code}</b>
+              玩家入場：首頁 →「我是玩家」→ 輸入你設定的<b className="text-gold-soft">開場密碼</b>
+              <br />
+              結束場次時會自動把資料彙整成「
+              <b className="text-gold-soft">{code}</b>」這個分頁，並清掉工作分頁。
             </p>
             <Link
               href={`/player/${code}`}

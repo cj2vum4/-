@@ -15,6 +15,7 @@ import {
   playerToRow,
   playersTabName,
   reportToRow,
+  archiveTabName,
   reportsTabName,
   rowToLog,
   rowToPlayer,
@@ -22,6 +23,7 @@ import {
   rowToSession,
   sessionToRow,
   sessionsTabName,
+  type ArchiveSheet,
   type StoreDriver,
 } from "./driver";
 
@@ -441,5 +443,57 @@ export class SheetsDriver implements StoreDriver {
         requestBody: { values: entries.map(logToRow) },
       }),
     );
+  }
+
+  /**
+   * 封存：把彙整內容寫進一個以場次代碼命名的分頁，再刪掉三個工作分頁。
+   *
+   * 順序很重要——先寫彙整、確認成功了才刪，中途失敗最多是多一個分頁，
+   * 不會把資料弄丟。
+   */
+  async archiveSession(code: string, sheet: ArchiveSheet): Promise<void> {
+    await this.init();
+
+    const archive = archiveTabName(code);
+    await this.ensureTab(archive, []);
+    await withRetry(() =>
+      this.api.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: range(archive, "A1"),
+        valueInputOption: "RAW",
+        requestBody: { values: sheet.rows },
+      }),
+    );
+
+    await this.deleteTabs([playersTabName(code), logTabName(code), reportsTabName(code)]);
+  }
+
+  /** 刪掉指定分頁。不存在的直接略過，重複封存也不會出錯。 */
+  private async deleteTabs(titles: string[]): Promise<void> {
+    const res = await withRetry(() =>
+      this.api.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+        fields: "sheets.properties(sheetId,title)",
+      }),
+    );
+    const byTitle = new Map(
+      (res.data.sheets ?? [])
+        .map((sh) => [sh.properties?.title ?? "", sh.properties?.sheetId])
+        .filter((e): e is [string, number] => Boolean(e[0]) && typeof e[1] === "number"),
+    );
+
+    const requests = titles
+      .map((t) => byTitle.get(t))
+      .filter((id): id is number => typeof id === "number")
+      .map((sheetId) => ({ deleteSheet: { sheetId } }));
+    if (requests.length === 0) return;
+
+    await withRetry(() =>
+      this.api.spreadsheets.batchUpdate({
+        spreadsheetId: this.spreadsheetId,
+        requestBody: { requests },
+      }),
+    );
+    titles.forEach((t) => this.knownTabs.delete(t));
   }
 }

@@ -31,10 +31,23 @@ export async function handle(fn: () => Promise<NextResponse>): Promise<NextRespo
   }
 }
 
+/**
+ * 網址上的場次代碼。
+ *
+ * 代碼是系統產生的：`2026-09-11`，同一天第二場是 `2026-09-11-2`。
+ * 玩家與主持人都不用自己打（他們輸入的是開場密碼），這裡只做格式檢查，
+ * 避免奇怪的字串被拿去當分頁名稱。
+ */
+const CODE_PATTERN = /^\d{4}-\d{2}-\d{2}(?:-\d{1,2})?$/;
+
 export function requireCode(raw: string): string {
-  const code = normalizeSessionCode(decodeURIComponent(raw ?? ""));
-  if (!code) throw new GameError("BAD_DATE", "日期格式無法辨識，請用 2026-08-16 這種寫法");
-  return code;
+  const code = decodeURIComponent(raw ?? "").trim();
+  if (CODE_PATTERN.test(code)) return code;
+
+  // 舊網址或手動輸入日期時的寬鬆解析，2026/9/11 之類的也接受
+  const normalized = normalizeSessionCode(code);
+  if (!normalized) throw new GameError("BAD_DATE", "場次代碼格式不正確");
+  return normalized;
 }
 
 export async function readJson<T>(req: Request): Promise<T> {

@@ -12,7 +12,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
 
     const body = await readJson<{ stageId?: string }>(req);
     const session = await setStage(code, body.stageId ?? "");
-    const { hostPin: _hidden, ...safe } = session;
+    const { password: _hidden, ...safe } = session;
     return jsonOk({ session: safe });
   });
 }

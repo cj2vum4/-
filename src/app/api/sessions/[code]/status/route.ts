@@ -20,7 +20,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       throw new GameError("BAD_REQUEST", "未知的場次狀態");
     }
     const session = await setSessionStatus(code, status);
-    const { hostPin: _hidden, ...safe } = session;
+    const { password: _hidden, ...safe } = session;
     return jsonOk({ session: safe });
   });
 }

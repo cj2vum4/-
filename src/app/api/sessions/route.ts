@@ -1,11 +1,10 @@
-import { handle, jsonOk, readJson, requireCode } from "@/lib/api-helpers";
-import { GameError } from "@/lib/errors";
+import { handle, jsonOk, readJson } from "@/lib/api-helpers";
 import { createSession, listSessions } from "@/lib/game";
 import { storageMode } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
 
-/** 列出所有場次（主持人開場前參考用） */
+/** 列出所有場次（主持人參考用，不含密碼） */
 export async function GET() {
   return handle(async () => {
     const sessions = await listSessions();
@@ -13,17 +12,20 @@ export async function GET() {
   });
 }
 
-/** 主持人開啟今天的場次 */
+/**
+ * 主持人開場。
+ *
+ * 只要一組開場密碼——場次代碼由當天日期自動產生（同一天第二場會加序號），
+ * 那個代碼同時也是結束後彙整分頁的名稱。
+ */
 export async function POST(req: Request) {
   return handle(async () => {
-    const body = await readJson<{ date?: string; title?: string; hostPin?: string }>(req);
-    const code = requireCode(body.date ?? "");
-    const pin = (body.hostPin ?? "").trim();
-    if (pin.length < 4) {
-      throw new GameError("BAD_REQUEST", "主持通行碼至少 4 個字，之後回到主持台需要用到");
-    }
-    const session = await createSession({ code, title: body.title, hostPin: pin });
-    const { hostPin: _hidden, ...safe } = session;
+    const body = await readJson<{ password?: string; title?: string }>(req);
+    const session = await createSession({
+      password: body.password ?? "",
+      title: body.title,
+    });
+    const { password: _hidden, ...safe } = session;
     return jsonOk({ session: safe });
   });
 }

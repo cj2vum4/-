@@ -44,7 +44,7 @@ const legacyRow = [
   "2026-09-09T13:36:37.000Z",  // 更新時間
 ];
 const legacy = rowToSession(legacyRow);
-check("舊格式：主持通行碼", legacy.hostPin, "0909");
+check("舊格式：開場密碼", legacy.password, "0909");
 check("舊格式：建立時間", legacy.createdAt, "2026-09-09T12:09:03.000Z");
 check("舊格式：更新時間", legacy.updatedAt, "2026-09-09T13:36:37.000Z");
 check("舊格式：彩池為空", legacy.pool, []);
@@ -64,7 +64,7 @@ const currentRow = [
   "2030-01-01T01:00:00.000Z",
 ];
 const current = rowToSession(currentRow);
-check("新格式：主持通行碼", current.hostPin, "1234");
+check("新格式：開場密碼", current.password, "1234");
 check("新格式：彩池階段", current.poolStage, "week2");
 check("新格式：彩池內容", current.pool, ["P:99", "S:w2_steal_power"]);
 check("新格式：建立時間", current.createdAt, "2030-01-01T00:00:00.000Z");
@@ -74,10 +74,16 @@ const emptyPoolRow = [
   "2030-02-02", "空池場", "open", "casting", "否", "", "", "5678",
   "2030-02-02T00:00:00.000Z", "2030-02-02T00:00:00.000Z",
 ];
-check("新格式且彩池為空：主持通行碼", rowToSession(emptyPoolRow).hostPin, "5678");
+check("新格式且彩池為空：開場密碼", rowToSession(emptyPoolRow).password, "5678");
 
 // ---- 來回轉換必須一致 ----
 check("場次來回轉換", rowToSession(sessionToRow(current)), current);
+
+// 「聘書已發放」「已封存」是後來追加在最後面的，舊列讀起來要是 false 而不是壞掉
+const shortRow = sessionToRow(current).slice(0, 10);
+check("舊場次列：聘書未發放", rowToSession(shortRow).certsIssued, false);
+check("舊場次列：未封存", rowToSession(shortRow).archived, false);
+check("舊場次列：開場密碼仍讀得到", rowToSession(shortRow).password, current.password);
 
 const player = {
   id: "PABC123", characterId: "zhouqian", name: "周謙", joinCode: "0001",

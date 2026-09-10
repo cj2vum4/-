@@ -10,31 +10,21 @@ import { chromium } from "playwright";
 
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3100";
 const SHOTS = process.env.SHOTS ?? null;
-const PIN = "8888";
-
-/** 每次跑都用一個沒被用過的場次，測試才能重複執行 */
-function randomSessionCode() {
-  const y = 2030 + Math.floor(Math.random() * 6);
-  const m = 1 + Math.floor(Math.random() * 12);
-  const d = 1 + Math.floor(Math.random() * 28);
-  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
-}
-
-const CODE = process.env.SESSION_CODE ?? randomSessionCode();
-/** 玩家端故意用不補零的斜線寫法，順便驗證日期解析 */
-const [cy, cm, cd] = CODE.split("-");
-const CODE_LOOSE = `${cy}/${Number(cm)}/${Number(cd)}`;
+/** 每次跑都用沒被用過的密碼，測試才能重複執行 */
+const PASSWORD = `ui-${Math.random().toString(36).slice(2, 10)}`;
+/** 場次代碼由伺服器產生（當天日期），開場之後才知道 */
+let CODE = "";
 
 const shot = async (page, name, opts = {}) =>
   SHOTS ? page.screenshot({ path: `${SHOTS}/${name}.png`, ...opts }) : null;
 
-console.log(`使用場次 ${CODE}`);
+console.log(`使用開場密碼 ${PASSWORD}`);
 const browser = await chromium.launch();
 const errors = [];
 const fail = [];
 
 /** 刻意查詢不存在的場次會回 404，那是正確行為，不算錯誤 */
-const EXPECTED_404 = /\/api\/sessions\/2001-01-01$/;
+const EXPECTED_404 = /\/api\/sessions\/lookup$/;
 
 async function newPage(ctx, label) {
   const page = await ctx.newPage();
@@ -74,14 +64,14 @@ try {
   // ---- 2. 主持人開場次 ----
   await host.click("text=我是主持人");
   await host.waitForURL("**/host");
-  await host.fill('input[placeholder="2026-08-16"]', CODE);
+  await host.fill('input[placeholder="至少 4 個字"]', PASSWORD);
   await host.fill('input[placeholder="例：週六下午場"]', "禮拜四晚場");
-  await host.fill('input[type="password"]', PIN);
   await shot(host, "2-host-entry");
   await host.click('button[type="submit"]');
-  await host.waitForURL(`**/host/${CODE}`, { timeout: 20000 });
+  await host.waitForURL(/\/host\/\d{4}-\d{2}-\d{2}/, { timeout: 20000 });
   await host.waitForSelector("text=玩 家", { timeout: 20000 });
-  console.log("  PASS  主持人進入主持台");
+  CODE = new URL(host.url()).pathname.split("/").pop();
+  console.log(`  PASS  主持人進入主持台（場次 ${CODE}）`);
 
   // ---- 3. 玩家：先測「無此場次」----
   const mobile = await browser.newContext({
@@ -92,14 +82,14 @@ try {
   await player.goto(BASE, { waitUntil: "networkidle" });
   await player.click("text=我是玩家");
   await player.waitForURL("**/player");
-  await player.fill('input[inputmode="numeric"]', "2001-01-01");
+  await player.fill('input[placeholder="主持人會告訴你"]', "沒有這組密碼");
   await player.click('button[type="submit"]');
   await player.waitForSelector("text=無此場次", { timeout: 15000 });
   await shot(player, "3-player-no-session");
-  console.log("  PASS  不存在的場次顯示「無此場次」");
+  console.log("  PASS  錯誤的密碼顯示「無此場次」");
 
-  // ---- 4. 玩家用 8/20 這種簡寫入場 ----
-  await player.fill('input[inputmode="numeric"]', CODE_LOOSE);
+  // ---- 4. 玩家用開場密碼入場 ----
+  await player.fill('input[placeholder="主持人會告訴你"]', PASSWORD);
   await player.click('button[type="submit"]');
   await player.waitForURL(`**/player/${CODE}`, { timeout: 20000 });
   await player.waitForSelector('button:has-text("周謙")', { timeout: 20000 });
@@ -108,7 +98,7 @@ try {
   await shot(player, "4-player-join");
   await player.click('button:has-text("入府")');
   await player.waitForSelector("text=勢力排名", { timeout: 20000 });
-  console.log(`  PASS  玩家以「${CODE_LOOSE}」寫法入場成功`);
+  console.log("  PASS  玩家用開場密碼入場成功");
 
   for (const name of ["沈識月", "陸秉白"]) {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });

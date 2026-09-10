@@ -6,37 +6,13 @@
  * 這裡最重要的一條是「玩家端拿不到任何人的陣營」——陣營一旦外洩，
  * 整個陣營博弈就沒了。
  */
-const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3100";
-const PIN = "8888";
+import { asPlayer, call, hostHeaders, makeChecker, openSession } from "./helpers.mjs";
 
-let failed = 0;
-function check(label, actual, expected) {
-  const ok = JSON.stringify(actual) === JSON.stringify(expected);
-  if (!ok) failed++;
-  console.log(`  ${ok ? "PASS" : "FAIL"}  ${label}`);
-  if (!ok) console.log(`        實際 ${JSON.stringify(actual)}\n        預期 ${JSON.stringify(expected)}`);
-}
-function ok(label, cond, detail = "") {
-  if (!cond) failed++;
-  console.log(`  ${cond ? "PASS" : "FAIL"}  ${label}${cond ? "" : `\n        ${detail}`}`);
-}
+const { check, ok, done } = makeChecker();
 
-async function call(path, { method = "GET", headers = {}, body } = {}) {
-  const res = await fetch(`${BASE}/api/sessions${path}`, {
-    method,
-    headers: { "content-type": "application/json", ...headers },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  return { status: res.status, json: await res.json().catch(() => ({})) };
-}
-
-const host = { "x-host-pin": PIN };
-const asPlayer = (p) => ({ "x-player-id": p.id, "x-join-code": p.joinCode });
-
-const CODE = `2036-0${1 + Math.floor(Math.random() * 9)}-2${Math.floor(Math.random() * 8)}`;
+const { code: CODE, password: PW } = await openSession();
 console.log(`使用場次 ${CODE}`);
-
-await call("", { method: "POST", body: { date: CODE, hostPin: PIN } });
+const host = hostHeaders(PW);
 
 const ROSTER = [
   ["zhouqian", "周謙", "九爺"],
@@ -126,5 +102,4 @@ ok(
   JSON.stringify(playerLog.json.log ?? []).slice(0, 300),
 );
 
-console.log(failed === 0 ? "\n陣營測試全部通過" : `\n${failed} 個案例失敗`);
-process.exit(failed === 0 ? 0 : 1);
+done("陣營測試");

@@ -24,13 +24,24 @@ export type SessionStatus = "open" | "paused" | "closed";
 
 /** 一個「場次」＝主持人開的一天，對應 Google Sheet 中的一組分頁 */
 export interface SessionMeta {
-  /** 場次代碼，正規化後的日期字串 YYYY-MM-DD */
+  /**
+   * 儲存代碼，同時也是封存後的分頁名稱。
+   *
+   * 由開場當天的日期產生：`2026-09-11`；同一天開第二場就是 `2026-09-11-2`。
+   * 這是內部用的鍵，不是玩家要記的東西——玩家記的是 password。
+   */
   code: string;
   title: string;
   status: SessionStatus;
   stageId: string;
-  /** 主持人通行碼（雛形階段為明碼，正式版需雜湊） */
-  hostPin: string;
+  /**
+   * 開場密碼。主持人開場時自訂，玩家用同一組進場。
+   *
+   * ⚠️ 目前主持台與玩家端共用這一組（依需求簡化）。也就是說知道密碼的玩家
+   * 把網址改成 /host 就能看到全場的真實陣營。之後若要分成兩組，
+   * 這裡拆成 password / hostPin 兩個欄位即可，其餘邏輯不用動。
+   */
+  password: string;
   /** 目前是否開放勢力招募 */
   recruitOpen: boolean;
   /** 目前彩池屬於哪個階段，換階段時用來判斷要不要重建 */
@@ -39,6 +50,8 @@ export interface SessionMeta {
   pool: string[];
   /** 聘書是否已發放 */
   certsIssued: boolean;
+  /** 是否已封存：三個工作分頁已彙整成一個並刪除，不能再進場 */
+  archived: boolean;
   createdAt: string;
   updatedAt: string;
 }
