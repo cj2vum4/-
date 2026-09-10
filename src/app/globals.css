@@ -32,6 +32,8 @@ body {
 body {
   font-family: var(--font-serif-cjk);
   min-height: 100dvh;
+  /* 手機上整頁不捲動，只有內容區自己捲——底部導覽列才不會被推走 */
+  overscroll-behavior-y: none;
   /* 暗色漆器底 + 兩道柔光，避免大片死黑 */
   background-image:
     radial-gradient(ellipse 80% 50% at 50% -10%, rgba(216, 178, 108, 0.13), transparent 70%),
@@ -87,4 +89,27 @@ select,
 textarea,
 button {
   font-family: inherit;
+}
+
+/* ---- 手機版固定外殼 ---- */
+
+/* 100dvh 會隨著手機瀏覽器網址列收合而變動，比 100vh 準確 */
+.app-shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.app-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+/* iPhone 底部圓角與 home indicator 的安全區域 */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }

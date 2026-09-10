@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { LogFeed } from "@/components/log-feed";
+import { AppShell, SectionTitle, ShellHeader, type TabDef } from "@/components/mobile-shell";
 import { ResourceStat } from "@/components/resource-stat";
 import {
   BackLink,
@@ -24,7 +25,7 @@ import {
   type PlayerIdentity,
 } from "@/lib/client";
 import { usePlayerState } from "@/lib/use-session-state";
-import type { MyReportView, PublicPlayerView } from "@/lib/types";
+import type { MyReportView, PublicPlayerView, SelfPlayerView } from "@/lib/types";
 
 interface CharacterOption {
   id: string;
@@ -57,6 +58,8 @@ export function PlayerPanel({ code }: { code: string }) {
   if (me === null) return <CharacterPicker code={code} onJoined={setMe} />;
   return <LiveBoard code={code} me={me} onReset={() => setMe(null)} />;
 }
+
+// ---------------- 選角 ----------------
 
 function CharacterPicker({
   code,
@@ -129,26 +132,25 @@ function CharacterPicker({
   }
 
   return (
-    <PageShell>
-      <BackLink href="/player" label="換一個場次" />
-
-      <header className="mt-6 mb-5">
-        <p className="text-xs tracking-[0.3em] text-muted">即將入府</p>
-        <h1 className="mt-2 flex flex-wrap items-center gap-2 text-2xl font-bold text-paper">
-          {sessionTitle ?? code}
-          <CodeStamp code={code} />
-        </h1>
-        <p className="mt-2 text-sm text-muted">
-          請選擇你要扮演的角色。角色皆可反串，不受性別限制。
-        </p>
+    <div className="app-shell mx-auto w-full max-w-lg">
+      <header className="shrink-0 border-b border-line/60 bg-lacquer/90 px-4 py-2.5">
+        <ShellHeader
+          backHref="/player"
+          title={
+            <>
+              {sessionTitle ?? code}
+              <CodeStamp code={code} />
+            </>
+          }
+          subtitle="選擇角色。角色皆可反串，不受性別限制。"
+        />
       </header>
 
-      <Panel>
-        <PanelTitle>選 擇 角 色</PanelTitle>
+      <div className="app-scroll px-4 py-3">
         {characters === null ? (
           <p className="py-6 text-center text-sm text-muted">載入角色中…</p>
         ) : (
-          <ul className="space-y-2.5">
+          <ul className="space-y-2">
             {characters.map((c) => {
               const on = picked === c.id;
               return (
@@ -157,48 +159,43 @@ function CharacterPicker({
                     type="button"
                     disabled={c.taken || busy}
                     onClick={() => setPicked(c.id)}
-                    className={`w-full rounded-xl border px-4 py-3.5 text-left transition-colors ${
+                    className={`w-full rounded-xl border px-3.5 py-3 text-left transition-colors ${
                       c.taken
                         ? "cursor-not-allowed border-line/50 bg-panel-2/30 opacity-40"
                         : on
                           ? "border-gold bg-gold/12"
-                          : "border-line bg-panel-2/60 hover:border-gold/50"
+                          : "border-line bg-panel-2/60"
                     }`}
                   >
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span
-                        className={`text-lg font-bold ${on ? "text-gold-soft" : "text-paper"}`}
-                      >
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className={`text-base font-bold ${on ? "text-gold-soft" : "text-paper"}`}>
                         {c.name}
                       </span>
                       <span
-                        className={`rounded border px-1.5 py-0.5 text-[11px] ${DIFFICULTY_STYLE[c.difficulty]}`}
+                        className={`rounded border px-1.5 py-0.5 text-[10px] ${DIFFICULTY_STYLE[c.difficulty]}`}
                       >
-                        難度 {c.difficulty}
+                        {c.difficulty}
                       </span>
                       <span className="text-xs text-muted">
-                        {c.gender}・{c.age} 歲・{c.occupation}
+                        {c.gender}・{c.age}・{c.occupation}
                       </span>
                       {c.note ? (
-                        <span className="rounded border border-line px-1.5 py-0.5 text-[11px] text-muted">
+                        <span className="rounded border border-line px-1 text-[10px] text-muted">
                           {c.note}
                         </span>
                       ) : null}
                       <span className="ml-auto shrink-0 text-xs">
                         {c.taken ? (
-                          <span className="text-muted/60">已被選走</span>
+                          <span className="text-muted/60">已選走</span>
                         ) : on ? (
-                          <span className="text-gold">✓ 已選擇</span>
+                          <span className="text-gold">✓</span>
                         ) : null}
                       </span>
                     </div>
-
-                    <p
-                      className={`mt-1.5 text-sm ${on ? "text-gold-soft/90" : "text-paper/75"}`}
-                    >
+                    <p className={`mt-1 text-xs ${on ? "text-gold-soft/90" : "text-paper/70"}`}>
                       {c.personality}
                     </p>
-                    <p className="mt-1 text-xs leading-relaxed text-muted/70">
+                    <p className="mt-0.5 text-[11px] leading-relaxed text-muted/65">
                       {c.appearance}
                     </p>
                   </button>
@@ -207,20 +204,23 @@ function CharacterPicker({
             })}
           </ul>
         )}
-
         {error ? (
-          <div className="mt-4">
+          <div className="mt-3">
             <Notice>{error}</Notice>
           </div>
         ) : null}
+      </div>
 
-        <Button onClick={join} disabled={!picked || busy} className="mt-4 w-full">
-          {busy ? "入場中…" : "入 府"}
+      <div className="safe-bottom shrink-0 border-t border-line bg-lacquer/95 px-4 py-3">
+        <Button onClick={join} disabled={!picked || busy} className="w-full">
+          {busy ? "入場中…" : picked ? `以「${characters?.find((c) => c.id === picked)?.name}」入府` : "請先選擇角色"}
         </Button>
-      </Panel>
-    </PageShell>
+      </div>
+    </div>
   );
 }
+
+// ---------------- 場上面板 ----------------
 
 function LiveBoard({
   code,
@@ -232,12 +232,13 @@ function LiveBoard({
   onReset: () => void;
 }) {
   const { snapshot, error, loading } = usePlayerState(code, me);
+  const [tab, setTab] = useState("me");
 
   const session = snapshot?.session;
   const stage = session ? STAGE_MAP[session.stageId] : undefined;
   const mine = snapshot?.me;
+  const character = mine ? CHARACTER_MAP[mine.characterId] : undefined;
 
-  /** 威望值公開，可以直接排；勢力值只拿得到名次 */
   const prestigeBoard = useMemo(
     () => [...(snapshot?.players ?? [])].sort((a, b) => b.prestige - a.prestige),
     [snapshot],
@@ -246,6 +247,20 @@ function LiveBoard({
     () => [...(snapshot?.players ?? [])].sort((a, b) => a.powerRank - b.powerRank),
     [snapshot],
   );
+
+  // 舉報分頁只在開放的階段出現，避免佔用導覽列位置
+  const tabs: TabDef[] = [
+    { id: "me", label: "我的", glyph: "印" },
+    { id: "board", label: "榜單", glyph: "榜" },
+    ...(stage?.hasReport ? [{ id: "act", label: "舉報", glyph: "劾" }] : []),
+    { id: "role", label: "角色", glyph: "卷" },
+    { id: "log", label: "動態", glyph: "誌" },
+  ];
+
+  // 階段改變導致舉報分頁消失時，把使用者帶回「我的」
+  useEffect(() => {
+    if (!tabs.some((t) => t.id === tab)) setTab("me");
+  }, [tabs, tab]);
 
   if (loading && !snapshot) {
     return (
@@ -288,190 +303,227 @@ function LiveBoard({
   }
 
   if (!mine) return null;
-  const character = CHARACTER_MAP[mine.characterId];
-  const showHp = stage?.id === "gunfight" || mine.hp > 0;
+  const showHp = stage?.id === "gunfight" || mine.hp !== 0;
 
   return (
-    <PageShell>
-      <div className="flex items-center justify-between gap-3">
-        <BackLink href="/" label="回身分選擇" />
-        <span className="text-xs text-muted/60">每 3 秒自動更新</span>
-      </div>
-
-      <header className="mt-4 mb-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <CodeStamp code={code} />
-          {session ? <StatusPill status={session.status} /> : null}
-          {session?.recruitOpen ? (
-            <span className="rounded-full border border-jade/50 bg-jade/10 px-2.5 py-0.5 text-xs text-jade-soft">
-              招募開放中
-            </span>
-          ) : null}
-        </div>
-        <h1 className="mt-3 flex flex-wrap items-center gap-2 text-2xl font-bold text-paper">
-          {mine.name}
-          {character ? (
-            <span
-              className={`rounded border px-1.5 py-0.5 text-[11px] font-normal ${DIFFICULTY_STYLE[character.difficulty]}`}
-            >
-              難度 {character.difficulty}
-            </span>
-          ) : null}
-        </h1>
-        {character ? (
-          <p className="mt-1 text-xs text-muted">
-            {character.gender}・{character.age} 歲・{character.occupation}
-            {character.note ? `・${character.note}` : ""}
-          </p>
-        ) : null}
-        <p className="mt-1 text-sm text-gold-soft">
-          {stage ? `第 ${stage.index} 階段・${stage.label}` : session?.stageId}
-          {stage?.hint ? <span className="text-muted/70">　{stage.hint}</span> : null}
-        </p>
-      </header>
-
-      <div className={`grid gap-3 ${showHp ? "grid-cols-3" : "grid-cols-2"}`}>
-        <ResourceStat def={RESOURCE_MAP.power} value={mine.power} size="lg" />
-        <ResourceStat def={RESOURCE_MAP.prestige} value={mine.prestige} size="lg" />
-        {showHp ? <ResourceStat def={RESOURCE_MAP.hp} value={mine.hp} size="lg" /> : null}
-      </div>
-
-      <p className="mt-3 text-center text-sm text-muted">
-        勢力排名　
-        <b className="tabular text-xl text-paper">{mine.powerRank}</b>
-        <span className="text-muted/60"> / {powerBoard.length}</span>
-        {mine.drawsRemaining > 0 ? (
-          <span className="ml-3 text-jade-soft">剩餘抽取 {mine.drawsRemaining} 次</span>
-        ) : null}
-      </p>
-
-      <div className="mt-5 space-y-4">
-        <Panel>
-          <PanelTitle extra={<span className="text-xs text-muted/70">只顯示名次</span>}>
-            勢 力 榜
-          </PanelTitle>
-          <ul className="space-y-1.5">
-            {powerBoard.map((p) => {
-              const isMe = p.id === mine.id;
-              return (
-                <li
-                  key={p.id}
-                  className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
-                    isMe ? "border-jade/60 bg-jade/10" : "border-transparent bg-panel-2/50"
-                  }`}
+    <AppShell
+      tabs={tabs}
+      active={tab}
+      onTabChange={setTab}
+      header={
+        <ShellHeader
+          title={
+            <>
+              {mine.name}
+              {character ? (
+                <span
+                  className={`rounded border px-1 text-[10px] font-normal ${DIFFICULTY_STYLE[character.difficulty]}`}
                 >
-                  <span
-                    className={`tabular w-5 shrink-0 text-sm ${p.powerRank <= 3 ? "text-jade-soft" : "text-muted"}`}
-                  >
-                    {p.powerRank}
-                  </span>
-                  <span
-                    className={`min-w-0 flex-1 truncate text-sm ${isMe ? "font-bold text-paper" : "text-paper/80"}`}
-                  >
-                    {p.name}
-                    {isMe ? <span className="ml-1.5 text-xs text-jade">（你）</span> : null}
-                  </span>
-                  <span className="tabular shrink-0 text-sm">
-                    {isMe ? (
-                      <span className="text-jade-soft">{mine.power}</span>
-                    ) : (
-                      <span className="text-muted/40">???</span>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          <p className="mt-3 text-xs leading-relaxed text-muted/60">
-            勢力值只有本人看得到數字，其他人僅能看到名次。
-          </p>
-        </Panel>
-
-        <Panel>
-          <PanelTitle>威 望 榜</PanelTitle>
-          <ul className="space-y-1.5">
-            {prestigeBoard.map((p, i) => {
-              const isMe = p.id === mine.id;
-              return (
-                <li
-                  key={p.id}
-                  className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${
-                    isMe ? "border-gold/60 bg-gold/10" : "border-transparent bg-panel-2/50"
-                  }`}
-                >
-                  <span
-                    className={`tabular w-5 shrink-0 text-sm ${i < 3 ? "text-gold-soft" : "text-muted"}`}
-                  >
-                    {i + 1}
-                  </span>
-                  <span
-                    className={`min-w-0 flex-1 truncate text-sm ${isMe ? "font-bold text-paper" : "text-paper/80"}`}
-                  >
-                    {p.name}
-                    {isMe ? <span className="ml-1.5 text-xs text-gold">（你）</span> : null}
-                  </span>
-                  <span className="tabular shrink-0 text-sm text-gold-soft">{p.prestige}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </Panel>
-
-        {stage?.hasReport ? (
-          <ReportActions
-            code={code}
-            me={me}
-            players={(snapshot?.players ?? []).filter((p) => p.id !== mine.id)}
-            myReports={snapshot?.myReports ?? []}
-            investigationsLeft={mine.investigationsLeft}
-          />
-        ) : null}
-
-        {character ? (
-          <Panel>
-            <details>
-              <summary className="cursor-pointer list-none text-sm font-bold tracking-[0.2em] text-gold/90 select-none">
-                我 的 角 色　
-                <span className="text-xs font-normal tracking-normal text-muted/60">
-                  （點開查看設定）
+                  {character.difficulty}
                 </span>
-              </summary>
-              <dl className="mt-3 space-y-2 text-sm">
-                <div className="flex gap-3">
-                  <dt className="w-12 shrink-0 text-xs text-muted">性格</dt>
-                  <dd className="text-paper/85">{character.personality}</dd>
-                </div>
-                <div className="flex gap-3">
-                  <dt className="w-12 shrink-0 text-xs text-muted">外貌</dt>
-                  <dd className="text-paper/85">{character.appearance}</dd>
-                </div>
-              </dl>
-            </details>
-          </Panel>
-        ) : null}
-
-        <Panel>
-          <PanelTitle>我 的 動 態</PanelTitle>
-          <div className="max-h-80 overflow-y-auto">
-            <LogFeed log={snapshot?.log ?? []} empty="還沒有你的紀錄，靜候九爺差遣" />
+              ) : null}
+            </>
+          }
+          subtitle={
+            <>
+              第 {stage?.index} 階段・{stage?.label}
+              {session?.recruitOpen ? (
+                <span className="ml-1.5 text-jade-soft">・招募開放中</span>
+              ) : null}
+            </>
+          }
+          right={session ? <StatusPill status={session.status} /> : null}
+        />
+      }
+    >
+      {tab === "me" ? (
+        <div className="space-y-3">
+          <div className={`grid gap-2.5 ${showHp ? "grid-cols-3" : "grid-cols-2"}`}>
+            <ResourceStat def={RESOURCE_MAP.power} value={mine.power} size="lg" />
+            <ResourceStat def={RESOURCE_MAP.prestige} value={mine.prestige} size="lg" />
+            {showHp ? <ResourceStat def={RESOURCE_MAP.hp} value={mine.hp} size="lg" /> : null}
           </div>
-        </Panel>
-      </div>
 
-      <div className="mt-6 text-center">
-        <button
-          type="button"
-          onClick={() => {
-            if (!confirm("要離開這個身分、重新選角嗎？原本的資料仍保留在紀錄中。")) return;
-            clearPlayerIdentity(code);
-            onReset();
-          }}
-          className="text-xs text-muted/60 underline underline-offset-4 transition-colors hover:text-vermilion-soft"
-        >
-          切換身分
-        </button>
-      </div>
-    </PageShell>
+          <div className="grid grid-cols-2 gap-2.5">
+            <StatBox label="勢力排名" value={`${mine.powerRank}`} suffix={`/ ${powerBoard.length}`} />
+            <StatBox label="剩餘抽取" value={`${mine.drawsRemaining}`} suffix="次" />
+          </div>
+
+          <Panel className="p-3.5">
+            <SectionTitle>場 次 資 訊</SectionTitle>
+            <dl className="space-y-1.5 text-sm">
+              <Row label="場次" value={<CodeStamp code={code} />} />
+              <Row label="階段" value={`${stage?.index}・${stage?.label}`} />
+              <Row
+                label="招募"
+                value={
+                  session?.recruitOpen ? (
+                    <span className="text-jade-soft">開放中</span>
+                  ) : (
+                    <span className="text-muted">未開放</span>
+                  )
+                }
+              />
+              <Row label="調查剩餘" value={`${mine.investigationsLeft} / ${INVESTIGATION_LIMIT} 次`} />
+            </dl>
+          </Panel>
+
+          <button
+            type="button"
+            onClick={() => {
+              if (!confirm("要離開這個身分、重新選角嗎？原本的資料仍保留在紀錄中。")) return;
+              clearPlayerIdentity(code);
+              onReset();
+            }}
+            className="w-full py-1 text-center text-xs text-muted/60 underline underline-offset-4"
+          >
+            切換身分
+          </button>
+        </div>
+      ) : null}
+
+      {tab === "board" ? (
+        <div className="space-y-3">
+          <Panel className="p-3.5">
+            <SectionTitle extra={<span className="text-[11px] text-muted/70">只顯示名次</span>}>
+              勢 力 榜
+            </SectionTitle>
+            <ul className="space-y-1">
+              {powerBoard.map((p) => (
+                <BoardRow
+                  key={p.id}
+                  rank={p.powerRank}
+                  name={p.name}
+                  isMe={p.id === mine.id}
+                  value={p.id === mine.id ? `${mine.power}` : "???"}
+                  tone="jade"
+                />
+              ))}
+            </ul>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted/60">
+              勢力值只有本人看得到數字。
+            </p>
+          </Panel>
+
+          <Panel className="p-3.5">
+            <SectionTitle>威 望 榜</SectionTitle>
+            <ul className="space-y-1">
+              {prestigeBoard.map((p, i) => (
+                <BoardRow
+                  key={p.id}
+                  rank={i + 1}
+                  name={p.name}
+                  isMe={p.id === mine.id}
+                  value={`${p.prestige}`}
+                  tone="gold"
+                />
+              ))}
+            </ul>
+          </Panel>
+        </div>
+      ) : null}
+
+      {tab === "act" ? (
+        <ReportActions
+          code={code}
+          me={me}
+          mine={mine}
+          players={(snapshot?.players ?? []).filter((p) => p.id !== mine.id)}
+          myReports={snapshot?.myReports ?? []}
+        />
+      ) : null}
+
+      {tab === "role" && character ? (
+        <div className="space-y-3">
+          <Panel className="p-3.5">
+            <SectionTitle>基 本 設 定</SectionTitle>
+            <dl className="space-y-1.5 text-sm">
+              <Row label="姓名" value={character.name} />
+              <Row label="性別" value={character.gender} />
+              <Row label="年齡" value={`${character.age} 歲`} />
+              <Row label="職業" value={character.occupation} />
+              <Row label="難度" value={character.difficulty} />
+              {character.note ? <Row label="備註" value={character.note} /> : null}
+            </dl>
+          </Panel>
+          <Panel className="p-3.5">
+            <SectionTitle>性 格</SectionTitle>
+            <p className="text-sm leading-relaxed text-paper/85">{character.personality}</p>
+          </Panel>
+          <Panel className="p-3.5">
+            <SectionTitle>外 貌</SectionTitle>
+            <p className="text-sm leading-relaxed text-paper/85">{character.appearance}</p>
+          </Panel>
+        </div>
+      ) : null}
+
+      {tab === "log" ? (
+        <Panel className="p-3.5">
+          <SectionTitle>我 的 動 態</SectionTitle>
+          <LogFeed log={snapshot?.log ?? []} empty="還沒有你的紀錄，靜候九爺差遣" />
+        </Panel>
+      ) : null}
+    </AppShell>
+  );
+}
+
+function StatBox({ label, value, suffix }: { label: string; value: string; suffix?: string }) {
+  return (
+    <div className="rounded-xl border border-line bg-panel-2/50 px-3 py-2.5 text-center">
+      <p className="text-[11px] tracking-[0.2em] text-muted">{label}</p>
+      <p className="tabular mt-0.5 text-2xl font-bold text-paper">
+        {value}
+        {suffix ? <span className="ml-1 text-xs font-normal text-muted/60">{suffix}</span> : null}
+      </p>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="shrink-0 text-xs text-muted">{label}</dt>
+      <dd className="min-w-0 truncate text-right text-paper/85">{value}</dd>
+    </div>
+  );
+}
+
+function BoardRow({
+  rank,
+  name,
+  isMe,
+  value,
+  tone,
+}: {
+  rank: number;
+  name: string;
+  isMe: boolean;
+  value: string;
+  tone: "jade" | "gold";
+}) {
+  const accent = tone === "jade" ? "text-jade-soft" : "text-gold-soft";
+  const border = tone === "jade" ? "border-jade/60 bg-jade/10" : "border-gold/60 bg-gold/10";
+  return (
+    <li
+      className={`flex items-center gap-2.5 rounded-lg border px-2.5 py-1.5 ${
+        isMe ? border : "border-transparent bg-panel-2/50"
+      }`}
+    >
+      <span className={`tabular w-4 shrink-0 text-xs ${rank <= 3 ? accent : "text-muted"}`}>
+        {rank}
+      </span>
+      <span
+        className={`min-w-0 flex-1 truncate text-sm ${isMe ? "font-bold text-paper" : "text-paper/80"}`}
+      >
+        {name}
+        {isMe ? <span className={`ml-1 text-[10px] ${accent}`}>你</span> : null}
+      </span>
+      <span
+        className={`tabular shrink-0 text-sm ${value === "???" ? "text-muted/40" : accent}`}
+      >
+        {value}
+      </span>
+    </li>
   );
 }
 
@@ -484,17 +536,16 @@ function LiveBoard({
 function ReportActions({
   code,
   me,
+  mine,
   players,
   myReports,
-  investigationsLeft,
 }: {
   code: string;
   me: PlayerIdentity;
+  mine: SelfPlayerView;
   players: PublicPlayerView[];
   myReports: MyReportView[];
-  investigationsLeft: number;
 }) {
-  const [mode, setMode] = useState<"none" | "report">("none");
   const [target, setTarget] = useState("");
   const [clue, setClue] = useState("");
   const [busy, setBusy] = useState(false);
@@ -513,7 +564,6 @@ function ReportActions({
         body: JSON.stringify({ targetId: target, clueCode: clue.trim() }),
       });
       setResult("舉報已送出，等待主持人判定");
-      setMode("none");
       setTarget("");
       setClue("");
     } catch (err) {
@@ -526,7 +576,7 @@ function ReportActions({
   async function investigate() {
     if (
       !confirm(
-        `確定要使用一次調查機會嗎？剩餘 ${investigationsLeft} 次（全場上限 ${INVESTIGATION_LIMIT} 次）。`,
+        `確定要使用一次調查機會嗎？剩餘 ${mine.investigationsLeft} 次（全場上限 ${INVESTIGATION_LIMIT} 次）。`,
       )
     )
       return;
@@ -539,8 +589,8 @@ function ReportActions({
       );
       setResult(
         data.reportedCount > 0
-          ? `調查結果：目前有 ${data.reportedCount} 筆針對你的舉報。剩餘調查 ${data.investigationsLeft} 次。`
-          : `調查結果：目前沒有人舉報你。剩餘調查 ${data.investigationsLeft} 次。`,
+          ? `調查結果：目前有 ${data.reportedCount} 筆針對你的舉報。剩餘 ${data.investigationsLeft} 次。`
+          : `調查結果：目前沒有人舉報你。剩餘 ${data.investigationsLeft} 次。`,
       );
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "調查失敗");
@@ -550,105 +600,79 @@ function ReportActions({
   }
 
   return (
-    <Panel>
-      <PanelTitle
-        extra={
-          <span className="text-xs text-muted">調查剩 {investigationsLeft} 次</span>
-        }
-      >
-        舉 報 與 調 查
-      </PanelTitle>
-
-      <div className="grid grid-cols-2 gap-2">
-        <Button
-          variant={mode === "report" ? "primary" : "ghost"}
-          disabled={busy}
-          onClick={() => {
-            setMode(mode === "report" ? "none" : "report");
-            setError(null);
-            setResult(null);
-          }}
-        >
-          我要舉報
-        </Button>
+    <div className="space-y-3">
+      <Panel className="p-3.5">
+        <SectionTitle extra={<span className="text-[11px] text-muted">剩 {mine.investigationsLeft} 次</span>}>
+          調 查 線 索
+        </SectionTitle>
         <Button
           variant="ghost"
-          disabled={busy || investigationsLeft <= 0}
+          className="w-full"
+          disabled={busy || mine.investigationsLeft <= 0}
           onClick={investigate}
         >
-          {investigationsLeft > 0 ? "調查線索" : "調查已用完"}
+          {mine.investigationsLeft > 0 ? "查詢是否有人舉報我" : "調查次數已用完"}
         </Button>
-      </div>
+      </Panel>
 
-      {mode === "report" ? (
-        <div className="mt-3 space-y-2.5 rounded-lg border border-line bg-lacquer/60 p-3">
-          <label className="block">
-            <span className="mb-1 block text-xs tracking-widest text-muted">舉報對象</span>
-            <select
-              value={target}
-              onChange={(e) => setTarget(e.target.value)}
-              className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
-            >
-              <option value="">請選擇…</option>
-              {players.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-1 block text-xs tracking-widest text-muted">線索卡編號</span>
-            <input
-              value={clue}
-              onChange={(e) => setClue(e.target.value)}
-              placeholder="例：C03"
-              className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
-            />
-          </label>
+      <Panel className="p-3.5">
+        <SectionTitle>我 要 舉 報</SectionTitle>
+        <div className="space-y-2.5">
+          <select
+            value={target}
+            onChange={(e) => setTarget(e.target.value)}
+            className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
+          >
+            <option value="">選擇舉報對象…</option>
+            {players.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+          <input
+            value={clue}
+            onChange={(e) => setClue(e.target.value)}
+            placeholder="線索卡編號，例：C03"
+            className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
+          />
           <Button onClick={submit} disabled={busy} className="w-full">
             {busy ? "送出中…" : "送出舉報"}
           </Button>
-          <p className="text-xs leading-relaxed text-muted/70">
+          <p className="text-[11px] leading-relaxed text-muted/70">
             舉報成立則對方威望 −1；誤舉報則自己威望 −1。
             結果不會立刻生效，會在下一次開啟招募時結算。
           </p>
         </div>
-      ) : null}
+      </Panel>
 
-      {error ? (
-        <div className="mt-3">
-          <Notice>{error}</Notice>
-        </div>
-      ) : null}
-      {result ? (
-        <div className="mt-3">
-          <Notice kind="success">{result}</Notice>
-        </div>
-      ) : null}
+      {error ? <Notice>{error}</Notice> : null}
+      {result ? <Notice kind="success">{result}</Notice> : null}
 
       {myReports.length > 0 ? (
-        <ul className="mt-3 space-y-1.5 border-t border-line/50 pt-3">
-          {myReports.map((r) => (
-            <li key={r.id} className="flex items-center gap-2 text-xs">
-              <span className="text-muted">舉報</span>
-              <b className="text-paper/85">{r.targetName}</b>
-              <span className="text-muted/60">線索 {r.clueCode}</span>
-              <span className="ml-auto">
-                {r.verdict === "" ? (
-                  <span className="text-muted">待判定</span>
-                ) : r.verdict === "success" ? (
-                  <span className="text-jade-soft">成立{r.settled ? "・已生效" : "・待生效"}</span>
-                ) : (
-                  <span className="text-vermilion-soft">
-                    不成立{r.settled ? "・已生效" : "・待生效"}
-                  </span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
+        <Panel className="p-3.5">
+          <SectionTitle>我 送 出 的 舉 報</SectionTitle>
+          <ul className="space-y-1.5">
+            {myReports.map((r) => (
+              <li key={r.id} className="flex items-center gap-2 text-xs">
+                <b className="text-paper/85">{r.targetName}</b>
+                <span className="text-muted/60">線索 {r.clueCode}</span>
+                <span className="ml-auto shrink-0">
+                  {r.verdict === "" ? (
+                    <span className="text-muted">待判定</span>
+                  ) : r.verdict === "success" ? (
+                    <span className="text-jade-soft">成立{r.settled ? "・已生效" : "・待生效"}</span>
+                  ) : (
+                    <span className="text-vermilion-soft">
+                      不成立{r.settled ? "・已生效" : "・待生效"}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Panel>
       ) : null}
-    </Panel>
+    </div>
   );
 }

@@ -61,8 +61,12 @@ function check(label, actual, expected) {
 
 try {
   // ---- 1. 首頁身分選擇 ----
-  const desktop = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-  const host = await newPage(desktop, "host");
+  // 主持人與玩家都用手機，所以兩邊都用手機尺寸測
+  const hostCtx = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    deviceScaleFactor: 2,
+  });
+  const host = await newPage(hostCtx, "host");
   await host.goto(BASE, { waitUntil: "networkidle" });
   await shot(host, "1-landing");
   check("首頁標題", await host.title(), "九爺，我想給您養老");
@@ -76,7 +80,7 @@ try {
   await shot(host, "2-host-entry");
   await host.click('button[type="submit"]');
   await host.waitForURL(`**/host/${CODE}`, { timeout: 20000 });
-  await host.waitForSelector("text=在 場 玩 家");
+  await host.waitForSelector("text=玩 家", { timeout: 20000 });
   console.log("  PASS  主持人進入主持台");
 
   // ---- 3. 玩家：先測「無此場次」----
@@ -98,21 +102,21 @@ try {
   await player.fill('input[inputmode="numeric"]', CODE_LOOSE);
   await player.click('button[type="submit"]');
   await player.waitForURL(`**/player/${CODE}`, { timeout: 20000 });
-  await player.waitForSelector("text=選 擇 角 色", { timeout: 20000 });
+  await player.waitForSelector('button:has-text("周謙")', { timeout: 20000 });
   await player.click('button:has-text("周謙")');
   await shot(player, "4-player-join");
-  await player.click('button:has-text("入 府")');
-  await player.waitForSelector("text=勢 力 榜", { timeout: 20000 });
+  await player.click('button:has-text("入府")');
+  await player.waitForSelector("text=勢力排名", { timeout: 20000 });
   console.log(`  PASS  玩家以「${CODE_LOOSE}」寫法入場成功`);
 
   for (const name of ["沈識月", "陸秉白"]) {
     const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
     const pg = await newPage(ctx, name);
     await pg.goto(`${BASE}/player/${CODE}`, { waitUntil: "networkidle" });
-    await pg.waitForSelector("text=選 擇 角 色", { timeout: 20000 });
+    await pg.waitForSelector(`button:has-text("${name}")`, { timeout: 20000 });
     await pg.click(`button:has-text("${name}")`);
-    await pg.click('button:has-text("入 府")');
-    await pg.waitForSelector("text=勢 力 榜", { timeout: 20000 });
+    await pg.click('button:has-text("入府")');
+    await pg.waitForSelector("text=勢力排名", { timeout: 20000 });
     await ctx.close();
   }
 
@@ -130,11 +134,11 @@ try {
   // 勢力值只有本人看得到，單獨發給周謙
   await host.click('button:has-text("勢力值")');
   await host.click('button:has-text("清除")');
-  await host.click('div[role="button"]:has-text("周謙")');
+  await host.click('li button:has-text("周謙")');
   await host.fill('input[placeholder^="事由"]', "結盟成功");
   await host.click('button:has-text("+5")');
   await host.waitForSelector("text=/發放 5 勢力/", { timeout: 20000 });
-  await shot(host, "5-host-console", { fullPage: true });
+  await shot(host, "5-host-console");
   console.log("  PASS  主持人完成全體與單人發放");
 
   // ---- 6. 玩家端即時反映（輪詢 3 秒）----
@@ -146,19 +150,46 @@ try {
     () => /勢力值\s*5/.test(document.body.innerText),
     { timeout: 20000 },
   );
-  await shot(player, "6-player-live", { fullPage: true });
+  await shot(player, "6-player-live");
   const text = await player.innerText("body");
   check("玩家看到的威望值", /威望值\s*(\d+)/.exec(text)?.[1], "10");
   check("玩家看到的勢力值", /勢力值\s*(\d+)/.exec(text)?.[1], "5");
 
   // ---- 7. 階段切換同步 ----
+  await host.click('button:has-text("階段")');
   await host.click('button:has-text("第一週：競選會長助理")');
   await player.waitForFunction(
     () => document.body.innerText.includes("第一週：競選會長助理"),
     { timeout: 20000 },
   );
-  await shot(player, "7-player-stage", { fullPage: true });
+  await shot(player, "7-player-stage");
   console.log("  PASS  階段切換即時同步到玩家端");
+
+  // ---- 8. 手機版：整頁不得捲動 ----
+  // 內容多時由中間區塊自己捲，外層頁面永遠固定，底部導覽列才不會被推走
+  async function assertNoPageScroll(page, label, tabLabels) {
+    for (const t of tabLabels) {
+      await page.click(`nav button:has-text("${t}")`);
+      await page.waitForTimeout(350);
+      const m = await page.evaluate(() => ({
+        pageScroll: document.documentElement.scrollHeight - window.innerHeight,
+        bodyScroll: document.body.scrollHeight - window.innerHeight,
+        navVisible: (() => {
+          const nav = document.querySelector("nav");
+          if (!nav) return false;
+          const r = nav.getBoundingClientRect();
+          return r.bottom <= window.innerHeight + 1 && r.top >= 0;
+        })(),
+      }));
+      check(`${label}「${t}」整頁不捲動`, m.pageScroll <= 1 && m.bodyScroll <= 1, true);
+      check(`${label}「${t}」導覽列可見`, m.navVisible, true);
+    }
+  }
+
+  await assertNoPageScroll(player, "玩家", ["我的", "榜單", "舉報", "角色", "動態"]);
+  await assertNoPageScroll(host, "主持", ["調配", "階段", "舉報", "設定", "紀錄"]);
+  await shot(player, "8-player-tabs");
+  await shot(host, "9-host-tabs");
 } finally {
   await browser.close();
 }
