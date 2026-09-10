@@ -375,6 +375,31 @@ export async function getHostSnapshot(code: string): Promise<HostSnapshot> {
 }
 
 /**
+ * 別人的紀錄裡，玩家看得到的類型。
+ *
+ * 用白名單而不是黑名單：之後新增紀錄類型時，預設是「別人看不到」，
+ * 忘了設可見性也不會外洩。這幾種是現場本來就看得見的事——
+ * 誰入場了、誰被請出去了、誰拿到聘書。
+ */
+const PEER_VISIBLE_TYPES = new Set<LogType>(["join", "note", "cert"]);
+
+/**
+ * 這筆紀錄能不能給這位玩家看。
+ *
+ * 自己的全都看得到；場次層級的事件（開場、換階段）照 publicVisible；
+ * 別人的則只有白名單類型、而且不能夾帶數值變動。
+ *
+ * 為什麼連威望值的變動都要擋：威望在榜單上是公開的沒錯，但動態裡出現
+ * 「某某 威望值 −1」就等於公布他被舉報成立、或被構陷了，而依規則
+ * 「公布時不顯示明細，只顯示數字的結果」。招募次數同理，那等於把威望排名攤開。
+ */
+function visibleToPlayer(e: LogEntry, playerId: string): boolean {
+  if (e.playerId === playerId) return true;
+  if (!e.playerId) return e.publicVisible;
+  return e.publicVisible && PEER_VISIBLE_TYPES.has(e.type) && !e.resource;
+}
+
+/**
  * 玩家視角。這裡是全系統最需要小心的地方：
  * 勢力值與血量只能給本人，其他人一律只給威望值與勢力值名次。
  */
@@ -449,9 +474,8 @@ export async function getPlayerSnapshot(
     players: active.map(toPublic),
     myReports,
     revealedClues: revealedClues(entry),
-    // 只給得到「可公開的紀錄」與「與自己有關的紀錄」
     log: [...entry.log]
-      .filter((e) => e.publicVisible || e.playerId === playerId)
+      .filter((e) => visibleToPlayer(e, playerId))
       // 威望相關的紀錄在第一週前不該出現
       .filter((e) => showPrestige || e.resource !== "威望值")
       .reverse(),
@@ -540,8 +564,8 @@ function grantDraws(entry: CacheEntry, stageLabel: string): LogEntry[] {
       playerName: player.name,
       reason: `${stageLabel}：威望第 ${rank} 名，獲得 ${draws} 次招募機會`,
       operator: "系統",
-      // 抽取次數由威望排名決定，而威望本來就是公開的
-      publicVisible: true,
+      // 只給本人。抽取次數等於把威望排名攤開講，別人不該從動態看到
+      publicVisible: false,
     });
   });
 }
@@ -677,7 +701,8 @@ async function settlePendingReports(entry: CacheEntry): Promise<LogEntry[]> {
         // 來源類型只出現在主持台（LogFeed 的 showSource），玩家端看不到。
         reason: "",
         operator: "系統",
-        publicVisible: true,
+        // 只給本人。別人看到「某某 威望值 −1」就等於知道他被舉報成立了
+        publicVisible: false,
       }),
     );
   }
@@ -1043,8 +1068,9 @@ export async function applyGrant(
         source,
         reason,
         operator,
-        // 威望值公開，勢力值與血量只有本人看得到
-        publicVisible: def.visibility === "public",
+        // 數值變動一律只給本人。威望值雖然在榜單上是公開的，但「誰被扣了」
+        // 會洩漏舉報與技能卡的結果，那些依規則不該公布明細
+        publicVisible: false,
       }),
     );
 
@@ -1431,7 +1457,7 @@ export async function useSkillCard(
     const now = new Date().toISOString();
     const logs: LogEntry[] = [];
 
-    /** 產生一筆數值變動紀錄。威望公開、勢力機密。 */
+    /** 產生一筆數值變動紀錄。只給本人，別人從動態看不出誰被構陷了。 */
     const change = (p: Player, resource: "power" | "prestige", delta: number) => {
       p[resource] += delta;
       p.updatedAt = now;
@@ -1447,7 +1473,7 @@ export async function useSkillCard(
           source: "技能卡效果",
           reason: `技能卡「${card.name}」`,
           operator: player.name,
-          publicVisible: isPrestige,
+          publicVisible: false,
         }),
       );
     };

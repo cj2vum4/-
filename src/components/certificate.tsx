@@ -41,7 +41,7 @@ export function Certificate({ cert }: { cert: CertificateData }) {
             扮演角色　<b className="text-[#3a2f22]">{cert.characterName}</b>
           </span>
           <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border-2 border-[#c0392b]/70 text-[10px] leading-tight font-bold text-[#c0392b]/80">
-            極目南洋
+            海星南洋
             <br />
             中華商會
           </span>

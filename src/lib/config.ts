@@ -266,7 +266,7 @@ export const FINAL_TITLES = [
   "南洋沒你也可以",
 ];
 
-export const ORGANIZATION_NAME = "極目南洋中華商會";
+export const ORGANIZATION_NAME = "海星南洋中華商會";
 
 export function positionForRank(rank: number): string {
   return rank === 1 ? "會長" : "副會長";
