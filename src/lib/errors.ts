@@ -4,6 +4,7 @@ export type GameErrorCode =
   | "SESSION_CLOSED"
   | "JOIN_CLOSED"
   | "BAD_REQUEST"
+  | "BAD_CLUE"
   | "BAD_DATE"
   | "UNAUTHORIZED"
   | "PLAYER_NOT_FOUND"
@@ -15,6 +16,7 @@ const STATUS: Record<GameErrorCode, number> = {
   SESSION_CLOSED: 409,
   JOIN_CLOSED: 409,
   BAD_REQUEST: 400,
+  BAD_CLUE: 400,
   BAD_DATE: 400,
   UNAUTHORIZED: 401,
   PLAYER_NOT_FOUND: 404,

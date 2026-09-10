@@ -255,7 +255,7 @@ function Console({
   const tabs: TabDef[] = [
     { id: "grant", label: "調配", glyph: "配" },
     { id: "stage", label: "階段", glyph: "幕" },
-    { id: "report", label: "舉報", glyph: "劾", badge: pendingReports.length },
+    { id: "report", label: "舉報", glyph: "劾", badge: pendingSettlement },
     { id: "setup", label: "設定", glyph: "設" },
     { id: "log", label: "紀錄", glyph: "誌" },
   ];
@@ -522,6 +522,12 @@ function Console({
       {/* ---------- 階段 ---------- */}
       {tab === "stage" ? (
         <div className="space-y-3">
+          {pendingSettlement > 0 ? (
+            <Notice kind="info">
+              有 {pendingSettlement} 筆舉報待結算，切換到下一階段時會自動生效。
+            </Notice>
+          ) : null}
+
           <Panel className="p-3">
             <SectionTitle>遊 戲 階 段</SectionTitle>
             <ul className="space-y-1.5">
@@ -571,11 +577,7 @@ function Console({
                     鎖定招募
                   </Button>
                 </div>
-                {pendingSettlement > 0 ? (
-                  <p className="mt-2 text-[11px] leading-relaxed text-vermilion-soft">
-                    開啟招募時會一併結算 {pendingSettlement} 筆已判定的舉報
-                  </p>
-                ) : null}
+
               </>
             ) : (
               <p className="text-[11px] leading-relaxed text-muted/70">
@@ -591,14 +593,14 @@ function Console({
         <Panel className="p-3">
           <SectionTitle
             extra={
-              pendingReports.length > 0 ? (
+              pendingSettlement > 0 ? (
                 <span className="rounded-full border border-vermilion/50 bg-vermilion/10 px-2 py-0.5 text-[11px] text-vermilion-soft">
-                  {pendingReports.length} 筆待判定
+                  {pendingSettlement} 筆待結算
                 </span>
               ) : null
             }
           >
-            舉 報 判 定
+            舉 報 紀 錄
           </SectionTitle>
 
           {(snapshot?.reports.length ?? 0) === 0 ? (
@@ -609,7 +611,7 @@ function Console({
                 <li
                   key={r.id}
                   className={`rounded-lg border px-3 py-2 ${
-                    r.verdict === "" ? "border-vermilion/40 bg-vermilion/5" : "border-line bg-panel-2/50"
+                    r.settled ? "border-line bg-panel-2/50" : "border-vermilion/40 bg-vermilion/5"
                   }`}
                 >
                   <p className="text-sm text-paper/90">
@@ -618,41 +620,26 @@ function Console({
                     <b className="text-paper">{r.targetName}</b>
                     <span className="ml-1.5 text-xs text-muted">線索 {r.clueCode}</span>
                   </p>
-                  {r.verdict === "" ? (
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <Button
-                        size="sm"
-                        variant="jade"
-                        disabled={busy}
-                        onClick={() => post(`/reports/${r.id}`, { verdict: "success" }, "已判定成立", "判定失敗")}
-                      >
-                        成立
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="danger"
-                        disabled={busy}
-                        onClick={() => post(`/reports/${r.id}`, { verdict: "fail" }, "已判定不成立", "判定失敗")}
-                      >
-                        不成立
-                      </Button>
-                    </div>
-                  ) : (
-                    <p className="mt-1 text-xs">
-                      <span className={r.verdict === "success" ? "text-jade-soft" : "text-vermilion-soft"}>
-                        {r.verdict === "success" ? "成立" : "不成立"}
-                      </span>
-                      <span className="ml-2 text-muted/70">
-                        {r.settled ? "已生效" : "待下次開啟招募時生效"}
-                      </span>
-                    </p>
-                  )}
+                  <p className="mt-1 text-xs">
+                    <span
+                      className={r.verdict === "success" ? "text-jade-soft" : "text-vermilion-soft"}
+                    >
+                      {r.verdict === "success" ? "成立" : "不成立"}
+                    </span>
+                    <span className="ml-1.5 text-muted/60">
+                      （扣 {r.verdict === "success" ? r.targetName : r.reporterName} 1 點威望）
+                    </span>
+                    <span className="ml-2 text-muted/70">
+                      {r.settled ? "已生效" : "待下一階段生效"}
+                    </span>
+                  </p>
                 </li>
               ))}
             </ul>
           )}
           <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
-            判定後威望值不會立刻變動，會在下一次「開啟招募」時一併結算。
+            系統依線索卡對應表自動判定，不需主持人裁決。
+            威望值會在你切換到下一階段時一併結算，玩家端只看得到數字，看不到明細。
           </p>
         </Panel>
       ) : null}

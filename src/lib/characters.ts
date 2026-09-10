@@ -122,3 +122,52 @@ export type Faction = (typeof FACTIONS)[number];
  */
 export const HIDDEN_BRANCHES = ["獨贏", "跟隨主陣營"] as const;
 export type HiddenBranch = (typeof HIDDEN_BRANCHES)[number];
+
+/**
+ * 線索卡對應表：編號 → 該線索指向的角色。
+ *
+ * 舉報時系統自動比對：
+ *  - 編號不在這 21 張之中 → 「您輸入錯誤」，不留下紀錄也不扣分
+ *  - 編號指向的角色 == 被舉報對象 → 舉報成立，扣被舉報人 1 點威望
+ *  - 編號指向的角色 != 被舉報對象 → 舉報錯誤，扣舉報人 1 點威望
+ */
+export const CLUE_CARDS: Record<string, string> = {
+  // 周謙
+  "0A6": "zhouqian",
+  "0B5": "zhouqian",
+  "1C3": "zhouqian",
+  // 沈識月
+  "6A2": "shenshiyue",
+  "3C5": "shenshiyue",
+  "4BC": "shenshiyue",
+  // 陳嘉樹
+  "5B6": "chenjiashu",
+  "0C5": "chenjiashu",
+  "7C3": "chenjiashu",
+  // 陸秉白
+  "67B": "lubingbai",
+  C13: "lubingbai",
+  "55A": "lubingbai",
+  // 季修遠
+  CC5: "jixiuyuan",
+  B20: "jixiuyuan",
+  B11: "jixiuyuan",
+  // 李婉序
+  "7C2": "liwanxu",
+  "1B6": "liwanxu",
+  DD1: "liwanxu",
+  // 商羽
+  "3BA": "shangyu",
+  "5C1": "shangyu",
+  "7B7": "shangyu",
+};
+
+/** 統一大小寫與空白，玩家手打時不必在意格式 */
+export function normalizeClueCode(raw: string): string {
+  return (raw ?? "").trim().toUpperCase().replace(/\s+/g, "");
+}
+
+/** 查線索卡指向哪個角色，查無此卡回 null */
+export function clueOwner(raw: string): string | null {
+  return CLUE_CARDS[normalizeClueCode(raw)] ?? null;
+}

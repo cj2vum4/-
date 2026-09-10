@@ -87,6 +87,14 @@ export interface StageDef {
   defaultSource: LedgerSource;
   /** 此階段常用的調整幅度，取代通用的快捷按鈕 */
   quickDeltas: number[];
+  /**
+   * 其他玩家的勢力值可見程度。
+   * value = 看得到確切數字；hidden = 完全看不到，連名次都沒有。
+   * 自己的勢力值永遠看得到。
+   */
+  peerPower: "value" | "hidden";
+  /** 威望值相關資訊是否出現在玩家端（含自己的）。第一週前完全不提威望。 */
+  showPrestige: boolean;
 }
 
 /**
@@ -105,6 +113,8 @@ export const STAGES: StageDef[] = [
     defaultResource: "power",
     defaultSource: "主持人手動發放",
     quickDeltas: [1, 5, 10],
+    peerPower: "value",
+    showPrestige: false,
   },
   {
     id: "expo",
@@ -116,6 +126,8 @@ export const STAGES: StageDef[] = [
     defaultResource: "power",
     defaultSource: "地點小遊戲",
     quickDeltas: [10, 20, 50, 100],
+    peerPower: "value",
+    showPrestige: false,
   },
   {
     id: "week1",
@@ -128,6 +140,8 @@ export const STAGES: StageDef[] = [
     defaultResource: "prestige",
     defaultSource: "投票獎勵",
     quickDeltas: [1, 2, 3, 5],
+    peerPower: "hidden",
+    showPrestige: true,
   },
   {
     id: "week2",
@@ -140,6 +154,8 @@ export const STAGES: StageDef[] = [
     defaultResource: "prestige",
     defaultSource: "投票獎勵",
     quickDeltas: [1, 2, 3, 5],
+    peerPower: "hidden",
+    showPrestige: true,
   },
   {
     id: "week3",
@@ -152,6 +168,8 @@ export const STAGES: StageDef[] = [
     defaultResource: "power",
     defaultSource: "拍賣扣款",
     quickDeltas: [100, 200, 300, 500],
+    peerPower: "hidden",
+    showPrestige: true,
   },
   {
     id: "gunfight",
@@ -162,6 +180,8 @@ export const STAGES: StageDef[] = [
     defaultResource: "hp",
     defaultSource: "槍戰結算",
     quickDeltas: [1, 2, 3],
+    peerPower: "hidden",
+    showPrestige: true,
   },
   {
     id: "final",
@@ -172,6 +192,8 @@ export const STAGES: StageDef[] = [
     defaultResource: "power",
     defaultSource: "系統修正",
     quickDeltas: [10, 50, 100],
+    peerPower: "hidden",
+    showPrestige: true,
   },
 ];
 
@@ -218,6 +240,9 @@ export const APP_NAME = "九爺，我想給您養老";
 
 /** 劇本設定的固定人數，主持人開場時可用來確認是否到齊 */
 export const PLAYER_COUNT_HINT = "本劇本為固定 7 人，角色皆可反串";
+
+/** 每位玩家的威望值初始值 */
+export const INITIAL_PRESTIGE = 10;
 
 /** 調查線索的每人次數上限 */
 export const INVESTIGATION_LIMIT = 2;

@@ -142,18 +142,15 @@ try {
   console.log("  PASS  主持人完成全體與單人發放");
 
   // ---- 6. 玩家端即時反映（輪詢 3 秒）----
-  await player.waitForFunction(
-    () => /威望值\s*10/.test(document.body.innerText),
-    { timeout: 20000 },
-  );
+  // 階段 0 不顯示威望，只驗證勢力值同步
   await player.waitForFunction(
     () => /勢力值\s*5/.test(document.body.innerText),
     { timeout: 20000 },
   );
   await shot(player, "6-player-live");
   const text = await player.innerText("body");
-  check("玩家看到的威望值", /威望值\s*(\d+)/.exec(text)?.[1], "10");
   check("玩家看到的勢力值", /勢力值\s*(\d+)/.exec(text)?.[1], "5");
+  check("階段 0 不顯示威望", /威望/.test(text), false);
 
   // ---- 7. 階段切換同步 ----
   await host.click('button:has-text("階段")');
@@ -186,7 +183,7 @@ try {
     }
   }
 
-  await assertNoPageScroll(player, "玩家", ["我的", "榜單", "舉報", "角色", "動態"]);
+  await assertNoPageScroll(player, "玩家", ["我的", "榜單", "行動", "角色", "動態"]);
   await assertNoPageScroll(host, "主持", ["調配", "階段", "舉報", "設定", "紀錄"]);
   await shot(player, "8-player-tabs");
   await shot(host, "9-host-tabs");

@@ -119,33 +119,51 @@ export interface LogEntry {
   publicVisible: boolean;
 }
 
-/** 玩家彼此看得到的資訊：威望值公開，勢力值只給名次 */
+/**
+ * 玩家彼此看得到的資訊。
+ *
+ * 欄位刻意都是選用的——可見度隨階段變動（見 STAGES 的 peerPower / showPrestige），
+ * 不該看到的欄位在後端就不放進回應，而不是靠前端不顯示。
+ */
 export interface PublicPlayerView {
   id: string;
   characterId: string;
   name: string;
-  prestige: number;
-  /** 勢力值名次（1 起算），不含數值 */
-  powerRank: number;
   status: PlayerStatus;
+  /** 僅在該階段公開他人勢力值時才有 */
+  power?: number;
+  powerRank?: number;
+  /** 僅在該階段顯示威望資訊時才有 */
+  prestige?: number;
 }
 
-/** 玩家看自己的完整資訊 */
-export interface SelfPlayerView extends PublicPlayerView {
+/** 玩家看自己的資訊。自己的勢力值與血量永遠看得到。 */
+export interface SelfPlayerView {
+  id: string;
+  characterId: string;
+  name: string;
+  status: PlayerStatus;
   power: number;
   hp: number;
+  /** 依階段而定；第一週前完全不提威望 */
+  prestige?: number;
+  powerRank?: number;
   hiddenBranch: HiddenBranch | "";
   drawsRemaining: number;
   investigationsUsed: number;
   investigationsLeft: number;
 }
 
-/** 玩家只看得到自己送出的舉報，看不到別人舉報了誰 */
+/**
+ * 玩家看得到自己送出的舉報。
+ * 判定結果在結算前不揭露——依規則要等開啟下一階段才公布，且不顯示明細。
+ */
 export interface MyReportView {
   id: string;
   ts: string;
   targetName: string;
   clueCode: string;
+  /** 結算前一律為 ""，避免提前得知成敗 */
   verdict: ReportVerdict;
   settled: boolean;
 }
@@ -157,6 +175,9 @@ export interface SessionPublicMeta {
   stageId: string;
   recruitOpen: boolean;
   updatedAt: string;
+  /** 這兩個旗標讓前端知道這一階段該顯示什麼，不必自己再查一次階段表 */
+  peerPower: "value" | "hidden";
+  showPrestige: boolean;
 }
 
 /** 玩家端輪詢拿到的內容 */

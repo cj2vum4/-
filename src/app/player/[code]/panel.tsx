@@ -240,19 +240,24 @@ function LiveBoard({
   const character = mine ? CHARACTER_MAP[mine.characterId] : undefined;
 
   const prestigeBoard = useMemo(
-    () => [...(snapshot?.players ?? [])].sort((a, b) => b.prestige - a.prestige),
+    () => [...(snapshot?.players ?? [])].sort((a, b) => (b.prestige ?? 0) - (a.prestige ?? 0)),
     [snapshot],
   );
   const powerBoard = useMemo(
-    () => [...(snapshot?.players ?? [])].sort((a, b) => a.powerRank - b.powerRank),
+    () =>
+      [...(snapshot?.players ?? [])].sort(
+        (a, b) => (a.powerRank ?? 99) - (b.powerRank ?? 99) || (b.power ?? 0) - (a.power ?? 0),
+      ),
     [snapshot],
   );
+  const peerPower = snapshot?.session.peerPower ?? "hidden";
+  const showPrestige = snapshot?.session.showPrestige ?? false;
 
   // 舉報分頁只在開放的階段出現，避免佔用導覽列位置
   const tabs: TabDef[] = [
     { id: "me", label: "我的", glyph: "印" },
     { id: "board", label: "榜單", glyph: "榜" },
-    ...(stage?.hasReport ? [{ id: "act", label: "舉報", glyph: "劾" }] : []),
+    { id: "act", label: "行動", glyph: "令" },
     { id: "role", label: "角色", glyph: "卷" },
     { id: "log", label: "動態", glyph: "誌" },
   ];
@@ -338,14 +343,22 @@ function LiveBoard({
     >
       {tab === "me" ? (
         <div className="space-y-3">
-          <div className={`grid gap-2.5 ${showHp ? "grid-cols-3" : "grid-cols-2"}`}>
+          <div
+            className={`grid gap-2.5 ${
+              showHp && showPrestige ? "grid-cols-3" : showPrestige || showHp ? "grid-cols-2" : "grid-cols-1"
+            }`}
+          >
             <ResourceStat def={RESOURCE_MAP.power} value={mine.power} size="lg" />
-            <ResourceStat def={RESOURCE_MAP.prestige} value={mine.prestige} size="lg" />
+            {showPrestige ? (
+              <ResourceStat def={RESOURCE_MAP.prestige} value={mine.prestige ?? 0} size="lg" />
+            ) : null}
             {showHp ? <ResourceStat def={RESOURCE_MAP.hp} value={mine.hp} size="lg" /> : null}
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">
-            <StatBox label="勢力排名" value={`${mine.powerRank}`} suffix={`/ ${powerBoard.length}`} />
+            {mine.powerRank ? (
+              <StatBox label="勢力排名" value={`${mine.powerRank}`} suffix={`/ ${powerBoard.length}`} />
+            ) : null}
             <StatBox label="剩餘抽取" value={`${mine.drawsRemaining}`} suffix="次" />
           </div>
 
@@ -364,7 +377,12 @@ function LiveBoard({
                   )
                 }
               />
-              <Row label="調查剩餘" value={`${mine.investigationsLeft} / ${INVESTIGATION_LIMIT} 次`} />
+              {stage?.hasReport ? (
+                <Row
+                  label="調查剩餘"
+                  value={`${mine.investigationsLeft} / ${INVESTIGATION_LIMIT} 次`}
+                />
+              ) : null}
             </dl>
           </Panel>
 
@@ -384,52 +402,63 @@ function LiveBoard({
 
       {tab === "board" ? (
         <div className="space-y-3">
-          <Panel className="p-3.5">
-            <SectionTitle extra={<span className="text-[11px] text-muted/70">只顯示名次</span>}>
-              勢 力 榜
-            </SectionTitle>
-            <ul className="space-y-1">
-              {powerBoard.map((p) => (
-                <BoardRow
-                  key={p.id}
-                  rank={p.powerRank}
-                  name={p.name}
-                  isMe={p.id === mine.id}
-                  value={p.id === mine.id ? `${mine.power}` : "???"}
-                  tone="jade"
-                />
-              ))}
-            </ul>
-            <p className="mt-2 text-[11px] leading-relaxed text-muted/60">
-              勢力值只有本人看得到數字。
-            </p>
-          </Panel>
+          {peerPower === "value" ? (
+            <Panel className="p-3.5">
+              <SectionTitle>勢 力 榜</SectionTitle>
+              <ul className="space-y-1">
+                {powerBoard.map((p) => (
+                  <BoardRow
+                    key={p.id}
+                    rank={p.powerRank ?? 0}
+                    name={p.name}
+                    isMe={p.id === mine.id}
+                    value={`${p.power ?? 0}`}
+                    tone="jade"
+                  />
+                ))}
+              </ul>
+            </Panel>
+          ) : (
+            <Panel className="p-3.5">
+              <SectionTitle>我 的 勢 力</SectionTitle>
+              <p className="tabular py-2 text-center text-4xl font-bold text-jade-soft">
+                {mine.power}
+              </p>
+              <p className="mt-1 text-center text-[11px] leading-relaxed text-muted/70">
+                本階段起，勢力值只有自己看得到，也不再公布名次。
+              </p>
+            </Panel>
+          )}
 
-          <Panel className="p-3.5">
-            <SectionTitle>威 望 榜</SectionTitle>
-            <ul className="space-y-1">
-              {prestigeBoard.map((p, i) => (
-                <BoardRow
-                  key={p.id}
-                  rank={i + 1}
-                  name={p.name}
-                  isMe={p.id === mine.id}
-                  value={`${p.prestige}`}
-                  tone="gold"
-                />
-              ))}
-            </ul>
-          </Panel>
+          {showPrestige ? (
+            <Panel className="p-3.5">
+              <SectionTitle>威 望 榜</SectionTitle>
+              <ul className="space-y-1">
+                {prestigeBoard.map((p, i) => (
+                  <BoardRow
+                    key={p.id}
+                    rank={i + 1}
+                    name={p.name}
+                    isMe={p.id === mine.id}
+                    value={`${p.prestige ?? 0}`}
+                    tone="gold"
+                  />
+                ))}
+              </ul>
+            </Panel>
+          ) : null}
         </div>
       ) : null}
 
       {tab === "act" ? (
-        <ReportActions
+        <PlayerActions
           code={code}
           me={me}
           mine={mine}
           players={(snapshot?.players ?? []).filter((p) => p.id !== mine.id)}
           myReports={snapshot?.myReports ?? []}
+          reportOpen={Boolean(stage?.hasReport)}
+          stageLabel={stage?.label ?? ""}
         />
       ) : null}
 
@@ -528,45 +557,89 @@ function BoardRow({
 }
 
 /**
- * 舉報與調查。
+ * 玩家的主動操作：勢力調配（隨時）與舉報／調查（第一～三週）。
  *
- * 刻意不顯示「有沒有人舉報我」——那要花一次調查機會才查得到，
- * 所以玩家端的快照裡也只有自己送出的舉報。
+ * 舉報的判定結果刻意不當場回饋——依規則要等開啟下一階段才公布。
+ * 玩家送出後只知道「已送出」，不知道成敗。
  */
-function ReportActions({
+function PlayerActions({
   code,
   me,
   mine,
   players,
   myReports,
+  reportOpen,
+  stageLabel,
 }: {
   code: string;
   me: PlayerIdentity;
   mine: SelfPlayerView;
   players: PublicPlayerView[];
   myReports: MyReportView[];
+  reportOpen: boolean;
+  stageLabel: string;
 }) {
-  const [target, setTarget] = useState("");
-  const [clue, setClue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
 
-  async function submit() {
+  // 轉贈
+  const [giftTarget, setGiftTarget] = useState("");
+  const [giftAmount, setGiftAmount] = useState("");
+
+  // 舉報
+  const [target, setTarget] = useState("");
+  const [clue, setClue] = useState("");
+
+  function reset() {
+    setError(null);
+    setResult(null);
+  }
+
+  async function transfer() {
+    reset();
+    if (!giftTarget) return setError("請選擇要轉贈的對象");
+    const amount = Number(giftAmount);
+    if (!Number.isInteger(amount) || amount <= 0) return setError("請輸入大於零的整數");
+    if (amount > mine.power) return setError(`勢力值不足，你目前只有 ${mine.power}`);
+
+    const name = players.find((p) => p.id === giftTarget)?.name ?? "對方";
+    if (!confirm(`確定將 ${amount} 點勢力值轉給「${name}」？轉出後無法收回。`)) return;
+
+    setBusy(true);
+    try {
+      const data = await api<{ balance: number }>(`/api/sessions/${code}/transfer`, {
+        method: "POST",
+        player: me,
+        body: JSON.stringify({ targetId: giftTarget, amount }),
+      });
+      setResult(`已轉贈 ${amount} 點給 ${name}，你剩餘 ${data.balance} 點。`);
+      setGiftAmount("");
+      setGiftTarget("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "轉贈失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function report() {
+    reset();
     if (!target) return setError("請選擇要舉報的對象");
     if (!clue.trim()) return setError("請填寫線索卡編號");
+
     setBusy(true);
-    setError(null);
     try {
       await api(`/api/sessions/${code}/reports`, {
         method: "POST",
         player: me,
         body: JSON.stringify({ targetId: target, clueCode: clue.trim() }),
       });
-      setResult("舉報已送出，等待主持人判定");
+      setResult("舉報已送出。結果會在開啟下一階段時公布。");
       setTarget("");
       setClue("");
     } catch (err) {
+      // 線索卡編號不存在時，後端回 BAD_CLUE，訊息就是「您輸入錯誤」
       setError(err instanceof ApiError ? err.message : "舉報失敗");
     } finally {
       setBusy(false);
@@ -574,6 +647,7 @@ function ReportActions({
   }
 
   async function investigate() {
+    reset();
     if (
       !confirm(
         `確定要使用一次調查機會嗎？剩餘 ${mine.investigationsLeft} 次（全場上限 ${INVESTIGATION_LIMIT} 次）。`,
@@ -581,7 +655,6 @@ function ReportActions({
     )
       return;
     setBusy(true);
-    setError(null);
     try {
       const data = await api<{ reportedCount: number; investigationsLeft: number }>(
         `/api/sessions/${code}/investigate`,
@@ -601,78 +674,133 @@ function ReportActions({
 
   return (
     <div className="space-y-3">
-      <Panel className="p-3.5">
-        <SectionTitle extra={<span className="text-[11px] text-muted">剩 {mine.investigationsLeft} 次</span>}>
-          調 查 線 索
-        </SectionTitle>
-        <Button
-          variant="ghost"
-          className="w-full"
-          disabled={busy || mine.investigationsLeft <= 0}
-          onClick={investigate}
-        >
-          {mine.investigationsLeft > 0 ? "查詢是否有人舉報我" : "調查次數已用完"}
-        </Button>
-      </Panel>
+      {error ? <Notice>{error}</Notice> : null}
+      {result ? <Notice kind="success">{result}</Notice> : null}
 
+      {/* ---- 勢力調配：任何階段都能用 ---- */}
       <Panel className="p-3.5">
-        <SectionTitle>我 要 舉 報</SectionTitle>
+        <SectionTitle
+          extra={<span className="text-[11px] text-muted">持有 {mine.power}</span>}
+        >
+          勢 力 調 配
+        </SectionTitle>
         <div className="space-y-2.5">
           <select
-            value={target}
-            onChange={(e) => setTarget(e.target.value)}
+            value={giftTarget}
+            onChange={(e) => setGiftTarget(e.target.value)}
             className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
           >
-            <option value="">選擇舉報對象…</option>
+            <option value="">選擇轉贈對象…</option>
             {players.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
               </option>
             ))}
           </select>
-          <input
-            value={clue}
-            onChange={(e) => setClue(e.target.value)}
-            placeholder="線索卡編號，例：C03"
-            className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
-          />
-          <Button onClick={submit} disabled={busy} className="w-full">
-            {busy ? "送出中…" : "送出舉報"}
-          </Button>
+          <div className="flex gap-2">
+            <input
+              value={giftAmount}
+              onChange={(e) => setGiftAmount(e.target.value)}
+              placeholder="轉贈點數"
+              inputMode="numeric"
+              className="tabular min-w-0 flex-1 rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
+            />
+            <Button
+              variant="jade"
+              onClick={transfer}
+              disabled={busy || mine.power <= 0}
+              className="shrink-0 px-5"
+            >
+              轉贈
+            </Button>
+          </div>
           <p className="text-[11px] leading-relaxed text-muted/70">
-            舉報成立則對方威望 −1；誤舉報則自己威望 −1。
-            結果不會立刻生效，會在下一次開啟招募時結算。
+            轉出後無法收回。對方會在自己的動態中看到這筆轉贈。
           </p>
         </div>
       </Panel>
 
-      {error ? <Notice>{error}</Notice> : null}
-      {result ? <Notice kind="success">{result}</Notice> : null}
+      {/* ---- 舉報與調查：只在第一～三週 ---- */}
+      {reportOpen ? (
+        <>
+          <Panel className="p-3.5">
+            <SectionTitle
+              extra={<span className="text-[11px] text-muted">剩 {mine.investigationsLeft} 次</span>}
+            >
+              調 查 線 索
+            </SectionTitle>
+            <Button
+              variant="ghost"
+              className="w-full"
+              disabled={busy || mine.investigationsLeft <= 0}
+              onClick={investigate}
+            >
+              {mine.investigationsLeft > 0 ? "查詢是否有人舉報我" : "調查次數已用完"}
+            </Button>
+          </Panel>
 
-      {myReports.length > 0 ? (
-        <Panel className="p-3.5">
-          <SectionTitle>我 送 出 的 舉 報</SectionTitle>
-          <ul className="space-y-1.5">
-            {myReports.map((r) => (
-              <li key={r.id} className="flex items-center gap-2 text-xs">
-                <b className="text-paper/85">{r.targetName}</b>
-                <span className="text-muted/60">線索 {r.clueCode}</span>
-                <span className="ml-auto shrink-0">
-                  {r.verdict === "" ? (
-                    <span className="text-muted">待判定</span>
-                  ) : r.verdict === "success" ? (
-                    <span className="text-jade-soft">成立{r.settled ? "・已生效" : "・待生效"}</span>
-                  ) : (
-                    <span className="text-vermilion-soft">
-                      不成立{r.settled ? "・已生效" : "・待生效"}
+          <Panel className="p-3.5">
+            <SectionTitle>我 要 舉 報</SectionTitle>
+            <div className="space-y-2.5">
+              <select
+                value={target}
+                onChange={(e) => setTarget(e.target.value)}
+                className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
+              >
+                <option value="">選擇舉報對象…</option>
+                {players.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={clue}
+                onChange={(e) => setClue(e.target.value)}
+                placeholder="線索卡編號"
+                autoCapitalize="characters"
+                className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm tracking-widest text-paper uppercase outline-none placeholder:text-muted/45 placeholder:normal-case focus:border-gold/70"
+              />
+              <Button onClick={report} disabled={busy} className="w-full">
+                {busy ? "送出中…" : "送出舉報"}
+              </Button>
+              <p className="text-[11px] leading-relaxed text-muted/70">
+                線索卡若對應到被舉報者，對方威望 −1；對應到其他人，則自己威望 −1。
+                結果與威望變動會在開啟下一階段時公布。
+              </p>
+            </div>
+          </Panel>
+
+          {myReports.length > 0 ? (
+            <Panel className="p-3.5">
+              <SectionTitle>我 送 出 的 舉 報</SectionTitle>
+              <ul className="space-y-1.5">
+                {myReports.map((r) => (
+                  <li key={r.id} className="flex items-center gap-2 text-xs">
+                    <b className="text-paper/85">{r.targetName}</b>
+                    <span className="text-muted/60">線索 {r.clueCode}</span>
+                    <span className="ml-auto shrink-0">
+                      {!r.settled ? (
+                        <span className="text-muted">待下一階段公布</span>
+                      ) : r.verdict === "success" ? (
+                        <span className="text-jade-soft">成立</span>
+                      ) : (
+                        <span className="text-vermilion-soft">不成立</span>
+                      )}
                     </span>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
+                  </li>
+                ))}
+              </ul>
+            </Panel>
+          ) : null}
+        </>
+      ) : (
+        <Panel className="p-3.5">
+          <p className="py-2 text-center text-xs leading-relaxed text-muted/70">
+            「{stageLabel}」階段尚未開放舉報與調查。
+          </p>
         </Panel>
-      ) : null}
+      )}
     </div>
   );
 }

@@ -1,8 +1,17 @@
 import { customAlphabet } from "nanoid";
-import { CHARACTER_MAP, FACTIONS, HIDDEN_BRANCHES, type Faction, type HiddenBranch } from "./characters";
+import {
+  CHARACTER_MAP,
+  FACTIONS,
+  HIDDEN_BRANCHES,
+  clueOwner,
+  normalizeClueCode,
+  type Faction,
+  type HiddenBranch,
+} from "./characters";
 import {
   DEFAULT_LEDGER_SOURCE,
   DEFAULT_STAGE,
+  INITIAL_PRESTIGE,
   INVESTIGATION_LIMIT,
   LOG_TAIL,
   RESOURCE_MAP,
@@ -138,6 +147,7 @@ function makeLog(
 }
 
 function publicMeta(s: SessionMeta): SessionPublicMeta {
+  const stage = STAGE_MAP[s.stageId];
   return {
     code: s.code,
     title: s.title,
@@ -145,6 +155,8 @@ function publicMeta(s: SessionMeta): SessionPublicMeta {
     stageId: s.stageId,
     recruitOpen: s.recruitOpen,
     updatedAt: s.updatedAt,
+    peerPower: stage?.peerPower ?? "hidden",
+    showPrestige: stage?.showPrestige ?? false,
   };
 }
 
@@ -275,18 +287,36 @@ export async function getPlayerSnapshot(
   const me = active.find((p) => p.id === playerId);
   if (!me) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
 
+  const stage = STAGE_MAP[entry.session.stageId];
+  const peerPower = stage?.peerPower ?? "hidden";
+  const showPrestige = stage?.showPrestige ?? false;
   const ranks = powerRanks(active);
-  const toPublic = (p: Player): PublicPlayerView => ({
-    id: p.id,
-    characterId: p.characterId,
-    name: p.name,
-    prestige: p.prestige,
-    powerRank: ranks.get(p.id) ?? 0,
-    status: p.status,
-  });
+
+  /**
+   * 可見度隨階段變動，所以這裡是逐欄位決定要不要放進回應。
+   * 不該看到的欄位在後端就不存在，不是靠前端隱藏。
+   */
+  const toPublic = (p: Player): PublicPlayerView => {
+    const view: PublicPlayerView = {
+      id: p.id,
+      characterId: p.characterId,
+      name: p.name,
+      status: p.status,
+    };
+    if (peerPower === "value") {
+      view.power = p.power;
+      view.powerRank = ranks.get(p.id);
+    }
+    if (showPrestige) view.prestige = p.prestige;
+    return view;
+  };
 
   const self: SelfPlayerView = {
-    ...toPublic(me),
+    id: me.id,
+    characterId: me.characterId,
+    name: me.name,
+    status: me.status,
+    // 自己的勢力值與血量任何階段都看得到
     power: me.power,
     hp: me.hp,
     hiddenBranch: me.hiddenBranch,
@@ -294,8 +324,11 @@ export async function getPlayerSnapshot(
     investigationsUsed: me.investigationsUsed,
     investigationsLeft: Math.max(0, INVESTIGATION_LIMIT - me.investigationsUsed),
   };
+  if (showPrestige) self.prestige = me.prestige;
+  // 名次會洩漏他人勢力值的相對高低，所以只在勢力值本來就公開時才給
+  if (peerPower === "value") self.powerRank = ranks.get(me.id);
 
-  // 只給自己送出的舉報。「有沒有被別人舉報」要靠調查線索才知道，不能從這裡漏出去。
+  // 只給自己送出的舉報，且結算前不揭露判定結果
   const myReports: MyReportView[] = entry.reports
     .filter((r) => r.reporterId === playerId)
     .map((r) => ({
@@ -303,7 +336,7 @@ export async function getPlayerSnapshot(
       ts: r.ts,
       targetName: r.targetName,
       clueCode: r.clueCode,
-      verdict: r.verdict,
+      verdict: r.settled ? r.verdict : "",
       settled: r.settled,
     }))
     .reverse();
@@ -312,12 +345,13 @@ export async function getPlayerSnapshot(
     view: "player",
     session: publicMeta(entry.session),
     me: self,
-    // 陣營、隱藏分支、勢力值數字、血量都不在這裡，連傳都不傳
     players: active.map(toPublic),
     myReports,
     // 只給得到「可公開的紀錄」與「與自己有關的紀錄」
     log: [...entry.log]
       .filter((e) => e.publicVisible || e.playerId === playerId)
+      // 威望相關的紀錄在第一週前不該出現
+      .filter((e) => showPrestige || e.resource !== "威望值")
       .reverse(),
     rev: entry.rev,
     fetchedAt: new Date().toISOString(),
@@ -339,18 +373,23 @@ export async function setStage(code: string, stageId: string): Promise<SessionMe
       recruitOpen: false,
       updatedAt: new Date().toISOString(),
     };
-    const log = makeLog({
-      type: "stage",
-      reason: `進入階段 ${stage.index}：${stage.label}`,
-      operator: "主持人",
-      publicVisible: true,
-    });
+    const logs = [
+      makeLog({
+        type: "stage",
+        reason: `進入階段 ${stage.index}：${stage.label}`,
+        operator: "主持人",
+        publicVisible: true,
+      }),
+    ];
 
     await getDriver().saveSession(next);
-    await getDriver().appendLogs(code, [log]);
-
     entry.session = next;
-    pushLog(entry, log);
+
+    // 依規則：舉報的結果與威望值變動要等「開啟下一個階段」才公布
+    logs.push(...(await settlePendingReports(entry)));
+
+    await getDriver().appendLogs(code, logs);
+    pushLog(entry, ...logs);
     return next;
   });
 }
@@ -368,26 +407,18 @@ export async function setRecruitOpen(code: string, open: boolean): Promise<Sessi
       recruitOpen: open,
       updatedAt: new Date().toISOString(),
     };
-    const logs = [
-      makeLog({
-        type: "recruit",
-        reason: open ? `開啟招募：${stage?.label}` : `鎖定招募：${stage?.label}`,
-        operator: "主持人",
-        publicVisible: true,
-      }),
-    ];
+    const log = makeLog({
+      type: "recruit",
+      reason: open ? `開啟招募：${stage?.label}` : `鎖定招募：${stage?.label}`,
+      operator: "主持人",
+      publicVisible: true,
+    });
 
     await getDriver().saveSession(next);
+    await getDriver().appendLogs(code, [log]);
+
     entry.session = next;
-
-    // 依規則：舉報造成的威望值異動不即時生效，
-    // 而是在「下一次開啟招募」時才批次更新。
-    if (open) {
-      logs.push(...(await settlePendingReports(entry)));
-    }
-
-    await getDriver().appendLogs(code, logs);
-    pushLog(entry, ...logs);
+    pushLog(entry, log);
     return next;
   });
 }
@@ -415,9 +446,8 @@ async function settlePendingReports(entry: CacheEntry): Promise<LogEntry[]> {
     current.updatedAt = now;
     touched.set(player.id, current);
 
-    // 威望值是公開數值，所以扣分本身瞞不住；但「誰舉報了誰」必須留白，
-    // 否則玩家就不需要花掉有限的調查機會去查了——那個機制會直接失效。
-    // 完整內容只有主持人（在舉報判定面板）與舉報人自己（在我的舉報清單）看得到。
+    // 依規則「公布時不顯示明細，只顯示數字的結果」：
+    // 事由留白，只留下威望值的變動數字。誰舉報了誰不會出現在任何玩家看得到的地方。
     logs.push(
       makeLog({
         type: "report",
@@ -427,7 +457,9 @@ async function settlePendingReports(entry: CacheEntry): Promise<LogEntry[]> {
         delta: -1,
         balanceAfter: current.prestige,
         source: "舉報懲罰",
-        reason: report.verdict === "success" ? "遭人舉報成立" : "誤舉報遭罰",
+        // 依規則「公布時不顯示明細，只顯示數字的結果」：事由完全留白。
+        // 來源類型只出現在主持台（LogFeed 的 showSource），玩家端看不到。
+        reason: "",
         operator: "系統",
         publicVisible: true,
       }),
@@ -513,7 +545,8 @@ export async function joinSession(code: string, characterId: string): Promise<Pl
       hiddenBranch: "",
       hiddenBranchLocked: false,
       power: 0,
-      prestige: 0,
+      // 依規則每個人的威望值初始為 10
+      prestige: INITIAL_PRESTIGE,
       hp: 0,
       drawsRemaining: 0,
       investigationsUsed: 0,
@@ -725,15 +758,27 @@ export async function applyGrant(
 
 // ---------------- 舉報與調查 ----------------
 
+export interface SubmitReportResult {
+  report: Report;
+}
+
+/**
+ * 玩家提出舉報。系統依線索卡對應表自動判定，主持人不需介入。
+ *
+ * 判定結果在結算前不會回傳給玩家——依規則要等開啟下一階段才公布。
+ */
 export async function submitReport(
   code: string,
   reporterId: string,
   targetId: string,
-  clueCode: string,
-): Promise<Report> {
-  const clue = clueCode.trim();
-  if (!clue) throw new GameError("BAD_REQUEST", "請填寫線索卡編號");
-  if (clue.length > 30) throw new GameError("BAD_REQUEST", "線索卡編號太長");
+  clueCodeRaw: string,
+): Promise<SubmitReportResult> {
+  const clueCode = normalizeClueCode(clueCodeRaw);
+  if (!clueCode) throw new GameError("BAD_REQUEST", "請填寫線索卡編號");
+
+  // 編號不在 21 張之中：不留紀錄、不扣分，只回報輸入有誤
+  const ownerCharacterId = clueOwner(clueCode);
+  if (!ownerCharacterId) throw new GameError("BAD_CLUE", "您輸入錯誤");
 
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
@@ -748,36 +793,52 @@ export async function submitReport(
     if (!target) throw new GameError("PLAYER_NOT_FOUND", "找不到被舉報的對象");
     if (reporterId === targetId) throw new GameError("BAD_REQUEST", "不能舉報自己");
 
+    // 線索卡指向的角色就是被舉報人 → 成立；指向別人 → 舉報錯誤
+    const verdict: ReportVerdict =
+      ownerCharacterId === target.characterId ? "success" : "fail";
+    const now = new Date().toISOString();
+
     const report: Report = {
       id: `R${nanoId()}`,
-      ts: new Date().toISOString(),
+      ts: now,
       reporterId: reporter.id,
       reporterName: reporter.name,
       targetId: target.id,
       targetName: target.name,
-      clueCode: clue,
-      verdict: "",
-      judgedAt: "",
+      clueCode,
+      verdict,
+      judgedAt: now,
       settled: false,
       settledAt: "",
     };
 
-    const log = makeLog({
-      type: "report",
-      playerId: reporter.id,
-      playerName: reporter.name,
-      reason: `提出舉報（線索 ${clue}），等待判定`,
-      operator: "玩家",
-      // 舉報內容在判定生效前不能公開，否則被舉報人立刻就知道了
-      publicVisible: false,
-    });
+    // 雙方都會在自己的動態看到「有舉報／被舉報」這件事，但看不到結果。
+    // 兩筆都不公開，其他玩家不會知道場上發生過這件事。
+    const logs = [
+      makeLog({
+        type: "report",
+        playerId: reporter.id,
+        playerName: reporter.name,
+        reason: `提出舉報（線索 ${clueCode}），結果將於下一階段公布`,
+        operator: "玩家",
+        publicVisible: false,
+      }),
+      makeLog({
+        type: "report",
+        playerId: target.id,
+        playerName: target.name,
+        reason: "遭到舉報，結果將於下一階段公布",
+        operator: "系統",
+        publicVisible: false,
+      }),
+    ];
 
     await getDriver().createReport(code, report);
-    await getDriver().appendLogs(code, [log]);
+    await getDriver().appendLogs(code, logs);
 
     entry.reports.push(report);
-    pushLog(entry, log);
-    return report;
+    pushLog(entry, ...logs);
+    return { report };
   });
 }
 
@@ -867,5 +928,83 @@ export async function useInvestigation(
       reportedCount,
       investigationsLeft: Math.max(0, INVESTIGATION_LIMIT - next.investigationsUsed),
     };
+  });
+}
+
+// ---------------- 玩家間勢力調配 ----------------
+
+/**
+ * 玩家把自己手上的勢力值轉給另一位玩家。遊戲進行中隨時可用。
+ *
+ * 第一週之後玩家看不到彼此的勢力值，所以送出方只知道自己扣了多少，
+ * 這是刻意的——轉贈本身就是盲的。
+ */
+export async function transferPower(
+  code: string,
+  fromId: string,
+  toId: string,
+  amount: number,
+): Promise<{ balance: number }> {
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new GameError("BAD_REQUEST", "轉贈的勢力值必須是大於零的整數");
+  }
+  if (fromId === toId) throw new GameError("BAD_REQUEST", "不能轉給自己");
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    if (entry.session.status !== "open") {
+      throw new GameError("SESSION_CLOSED", "場次目前不開放操作");
+    }
+
+    const from = entry.players.find((p) => p.id === fromId && p.status === "active");
+    const to = entry.players.find((p) => p.id === toId && p.status === "active");
+    if (!from) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
+    if (!to) throw new GameError("PLAYER_NOT_FOUND", "找不到對象");
+    if (from.power < amount) {
+      throw new GameError("BAD_REQUEST", `勢力值不足，你目前只有 ${from.power}`);
+    }
+
+    const now = new Date().toISOString();
+    const nextFrom: Player = { ...from, power: from.power - amount, updatedAt: now };
+    const nextTo: Player = { ...to, power: to.power + amount, updatedAt: now };
+
+    // 勢力值是機密，兩筆紀錄都只有當事人看得到
+    const logs = [
+      makeLog({
+        type: "grant",
+        playerId: from.id,
+        playerName: from.name,
+        resource: "勢力值",
+        delta: -amount,
+        balanceAfter: nextFrom.power,
+        source: "玩家間轉贈",
+        reason: `轉贈給 ${to.name}`,
+        operator: from.name,
+        publicVisible: false,
+      }),
+      makeLog({
+        type: "grant",
+        playerId: to.id,
+        playerName: to.name,
+        resource: "勢力值",
+        delta: amount,
+        balanceAfter: nextTo.power,
+        source: "玩家間轉贈",
+        reason: `來自 ${from.name} 的轉贈`,
+        operator: from.name,
+        publicVisible: false,
+      }),
+    ];
+
+    const driver = getDriver();
+    await Promise.all([
+      driver.savePlayers(code, [nextFrom, nextTo]),
+      driver.appendLogs(code, logs),
+    ]);
+
+    Object.assign(from, nextFrom);
+    Object.assign(to, nextTo);
+    pushLog(entry, ...logs);
+    return { balance: nextFrom.power };
   });
 }

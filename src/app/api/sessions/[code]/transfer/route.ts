@@ -1,9 +1,9 @@
 import { handle, jsonOk, playerAuth, readJson, requireCode } from "@/lib/api-helpers";
-import { assertPlayer, submitReport } from "@/lib/game";
+import { assertPlayer, transferPower } from "@/lib/game";
 
 export const dynamic = "force-dynamic";
 
-/** 玩家提出舉報。判定由主持人操作，威望值要等下次開啟招募才生效。 */
+/** 玩家把自己手上的勢力值轉給另一位玩家 */
 export async function POST(req: Request, ctx: { params: Promise<{ code: string }> }) {
   return handle(async () => {
     const { code: raw } = await ctx.params;
@@ -11,14 +11,13 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
     const { playerId, joinCode } = playerAuth(req);
     await assertPlayer(code, playerId, joinCode);
 
-    const body = await readJson<{ targetId?: string; clueCode?: string }>(req);
-    const { report } = await submitReport(
+    const body = await readJson<{ targetId?: string; amount?: number }>(req);
+    const result = await transferPower(
       code,
       playerId,
       body.targetId ?? "",
-      body.clueCode ?? "",
+      Number(body.amount),
     );
-    // 判定結果刻意不回傳——依規則要等開啟下一階段才公布
-    return jsonOk({ report: { id: report.id, targetName: report.targetName } });
+    return jsonOk(result);
   });
 }
