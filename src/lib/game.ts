@@ -20,6 +20,7 @@ import {
   type LedgerSource,
 } from "./config";
 import { GameError } from "./errors";
+import { scriptFaction } from "./script-factions";
 import {
   RECRUIT_POOLS,
   SKILL_CARDS,
@@ -363,6 +364,10 @@ export async function getHostSnapshot(code: string): Promise<HostSnapshot> {
     reports: [...entry.reports].reverse(),
     revealedClues: revealedClues(entry),
     poolLeft: entry.session.pool.length,
+    // 劇本原訂的陣營，讓主持台標出「這個人被改過」。只給主持人，不進玩家端
+    scriptFactions: Object.fromEntries(
+      entry.players.map((p) => [p.characterId, scriptFaction(p.characterId)]),
+    ),
     log: [...entry.log].reverse(),
     rev: entry.rev,
     fetchedAt: new Date().toISOString(),
@@ -760,7 +765,8 @@ export async function joinSession(
       characterId,
       name: character.name,
       joinCode: nanoCode(),
-      faction: "",
+      // 陣營由劇本固定，入場就套用，主持人不必一個個設
+      faction: scriptFaction(characterId),
       hiddenBranch: "",
       hiddenBranchLocked: false,
       power: 0,
@@ -849,6 +855,50 @@ export async function removePlayer(code: string, playerId: string): Promise<void
 }
 
 /** 設定真實陣營。只有主持人能做，紀錄不對玩家公開。 */
+/**
+ * 把劇本指定的陣營套用到全場。
+ *
+ * 陣營是後來才固定下來的，改版前入場的玩家欄位是空的。這個動作只補「還沒設定」
+ * 的人，已經被主持人手動改過的一律不動——陸秉白改投其他陣營就是這種情況。
+ */
+export async function applyScriptFactions(code: string): Promise<{ applied: number }> {
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const targets = entry.players.filter(
+      (p) => p.status === "active" && !p.faction && scriptFaction(p.characterId),
+    );
+    if (targets.length === 0) return { applied: 0 };
+
+    const now = new Date().toISOString();
+    const logs: LogEntry[] = [];
+    const next = targets.map((player) => {
+      const faction = scriptFaction(player.characterId);
+      logs.push(
+        makeLog({
+          type: "faction",
+          playerId: player.id,
+          playerName: player.name,
+          reason: `依劇本套用陣營：${faction}`,
+          operator: "主持人",
+          // 陣營對玩家保密，紀錄也不能公開
+          publicVisible: false,
+        }),
+      );
+      return { ...player, faction, updatedAt: now };
+    });
+
+    await getDriver().savePlayers(code, next);
+    await getDriver().appendLogs(code, logs);
+
+    next.forEach((n) => {
+      const cur = entry.players.find((p) => p.id === n.id);
+      if (cur) Object.assign(cur, n);
+    });
+    pushLog(entry, ...logs);
+    return { applied: next.length };
+  });
+}
+
 export async function setFaction(
   code: string,
   playerId: string,

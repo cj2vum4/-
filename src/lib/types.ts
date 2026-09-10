@@ -235,6 +235,8 @@ export interface HostSnapshot {
   revealedClues: RevealedClue[];
   /** 彩池剩餘張數，主持人可據以掌握進度 */
   poolLeft: number;
+  /** 角色代碼 → 劇本原訂陣營。只出現在主持人視角，玩家端拿不到 */
+  scriptFactions: Record<string, Faction | "">;
   log: LogEntry[];
   rev: number;
   fetchedAt: string;

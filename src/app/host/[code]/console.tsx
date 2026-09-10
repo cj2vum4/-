@@ -770,13 +770,36 @@ function Console({
       {tab === "setup" ? (
         <div className="space-y-3">
           <Panel className="p-3">
-            <SectionTitle>陣 營 與 隱 藏 分 支</SectionTitle>
+            <SectionTitle
+              extra={
+                players.some((p) => !p.faction) ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() =>
+                      post("/factions", {}, "已依劇本套用陣營", "套用陣營失敗")
+                    }
+                    className="text-[11px] text-gold underline underline-offset-4 disabled:opacity-50"
+                  >
+                    依劇本套用
+                  </button>
+                ) : null
+              }
+            >
+              陣 營 與 隱 藏 分 支
+            </SectionTitle>
+            <p className="mb-2 text-[11px] leading-relaxed text-muted/70">
+              陣營由劇本固定，入場時自動套用。陸秉白預設為隱藏鬼老，
+              若他選擇加入其他陣營，在這裡改。
+            </p>
             {players.length === 0 ? (
               <p className="py-4 text-center text-xs text-muted/70">尚無玩家</p>
             ) : (
               <ul className="space-y-2">
                 {players.map((p) => {
                   const character = CHARACTER_MAP[p.characterId];
+                  // 劇本陣營由伺服器帶下來，前端不 import 機密對應表
+                  const scriptFaction = snapshot?.scriptFactions?.[p.characterId] ?? "";
                   return (
                     <li key={p.id} className="rounded-lg border border-line bg-panel-2/60 px-3 py-2">
                       <div className="flex items-center gap-1.5">
@@ -821,6 +844,11 @@ function Console({
                             </option>
                           ))}
                         </select>
+                        {scriptFaction && p.faction && p.faction !== scriptFaction ? (
+                          <span className="rounded border border-gold/40 bg-gold/10 px-2 py-1 text-[10px] text-gold-soft">
+                            已改動・劇本為 {scriptFaction}
+                          </span>
+                        ) : null}
 
                         {character?.hasHiddenBranch ? (
                           p.hiddenBranchLocked ? (

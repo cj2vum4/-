@@ -3,8 +3,18 @@
  *
  * 玩家入場時是「選角色」而不是自己取暱稱，所以這份清單就是可選名單。
  * 角色皆可反串，性別欄位是角色設定，不是選角限制。
+ *
+ * ⚠️ 這個檔案會被玩家端的 client component import，內容會原封不動出現在
+ * 瀏覽器的 JS bundle 裡。**任何對玩家保密的資料都不能放這裡**——
+ * 真實陣營放 `src/lib/script-factions.ts`（只有伺服器端會 import）。
+ * CLUE_CARDS 目前只有伺服器端引用，被 tree-shaking 拿掉了，也不要在
+ * client component 裡引用它，否則 21 張線索卡的答案就攤在玩家眼前。
  */
 export type Difficulty = "低" | "中" | "高";
+
+/** 真實陣營。遊戲開始即固定，對玩家保密，只有主持人看得到。 */
+export const FACTIONS = ["九爺", "紅姑娘", "隱藏鬼老"] as const;
+export type Faction = (typeof FACTIONS)[number];
 
 export interface CharacterDef {
   id: string;
@@ -120,10 +130,6 @@ export const DIFFICULTY_STYLE: Record<Difficulty, string> = {
   中: "border-gold/50 bg-gold/10 text-gold-soft",
   高: "border-vermilion/50 bg-vermilion/10 text-vermilion-soft",
 };
-
-/** 真實陣營。遊戲開始即固定，對玩家保密，只有主持人看得到。 */
-export const FACTIONS = ["九爺", "紅姑娘", "隱藏鬼老"] as const;
-export type Faction = (typeof FACTIONS)[number];
 
 /**
  * 陸秉白專屬的隱藏分支，由主持人於第三週私下設定，設定後鎖定不可逆。

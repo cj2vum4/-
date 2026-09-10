@@ -16,7 +16,7 @@
 | 固定 7 名角色選角入場，同一角色不會被兩人選走 | ✅ |
 | 三種數值：勢力值、威望值、血量 | ✅ |
 | **數值可見性規則**（見下方，是本系統最容易出錯的地方） | ✅ |
-| 真實陣營設定（主持人專用，對玩家完全保密） | ✅ |
+| 真實陣營依劇本固定，入場自動套用（主持人專用，對玩家完全保密） | ✅ |
 | 陸秉白隱藏分支，設定後單向鎖定不可逆 | ✅ |
 | 劇本的 7 個階段狀態機 | ✅ |
 | 勢力招募：49 張有限彩池、依威望排名發次數、可一次抽 1 或 5 張 | ✅ |
@@ -29,10 +29,9 @@
 
 ### 尚未實作
 
-| 子系統 | 缺什麼 |
+| 子系統 | 現況 |
 |---|---|
-| 真實陣營 | 7 名角色各自屬於哪一陣營的劇本設定（目前由主持人自行指定） |
-| 拍賣 | 5 個標的的起拍價與真實價值差額；現在只有主持人手動發放的快捷鍵 |
+| 拍賣 | 起拍價與真實價值由主持人現場處理，App 只提供 5 個標的的發放快捷鍵 |
 | 槍戰 | 命中判定在現場進行，App 只負責依輪次發放勢力值 |
 
 ---
@@ -90,6 +89,34 @@
 連其他人的 `power` 欄位都不存在。這支端點因此必須驗證身分，不接受匿名讀取。
 
 流水帳同理：勢力值與血量的異動標記為不可公開，玩家只看得到自己的那幾筆。
+
+### ⚠️ 機密資料不能放進玩家端會 import 的模組
+
+「後端不傳」只擋得住 API。還有第二條外洩管道：**前端 bundle**。
+
+`src/lib/characters.ts` 會被玩家端的 client component import，
+裡面所有東西都會原封不動打包進瀏覽器下載得到的 JS。真實陣營一度被放在這裡，
+結果玩家打開 devtools 就能看到全場陣營——API 一個字都沒多傳，但遊戲已經破功。
+
+所以：
+
+| 資料 | 放哪 | 玩家端怎麼拿 |
+|---|---|---|
+| 角色姓名、難度、性格、海報 | `src/lib/characters.ts` | 直接 import，本來就公開 |
+| **真實陣營** | `src/lib/script-factions.ts`（只有伺服器端 import） | 拿不到，本來就不該拿到 |
+| **21 張線索卡答案** | `characters.ts` 的 `CLUE_CARDS`，但只有伺服器端引用 | 靠 tree-shaking 排除，**不要在 client component 引用它** |
+
+主持台要顯示「劇本原訂陣營」時，走 `HostSnapshot.scriptFactions` 由伺服器帶下來，
+不要在前端 import 機密檔案。
+
+改完記得驗一次：
+
+```bash
+npm run build:only && npm run check:leaks
+```
+
+`scripts/check-leaks.mjs` 會掃玩家端的 chunk，找角色→陣營的對應與線索卡編號，
+發現就讓 CI 掛掉。
 
 ---
 
@@ -316,14 +343,25 @@ scripts/
 
 玩法設定集中在幾個檔案，不用動資料庫也不用動 API：
 
-**`src/lib/characters.ts`** — 7 名角色、陣營選項、隱藏分支選項
+**`src/lib/characters.ts`** — 7 名角色的公開設定、陣營名稱、隱藏分支選項
 
 ```ts
 export const CHARACTERS = [
-  { id: "zhouqian", name: "周謙", difficulty: "中等" },
-  // …性別／年齡／職業／性格／外貌等欄位已預留，補上就會顯示在選角頁
-  { id: "lubingbai", name: "陸秉白", difficulty: "較高", hasHiddenBranch: true },
+  { id: "zhouqian", name: "周謙", difficulty: "低", occupation: "船業老闆", /* … */ },
+  { id: "lubingbai", name: "陸秉白", difficulty: "高", hasHiddenBranch: true },
 ];
+```
+
+⚠️ 這個檔案會進玩家端 bundle，只能放公開資料。
+
+**`src/lib/script-factions.ts`** — 角色的真實陣營（**只有伺服器端能 import**）
+
+```ts
+export const CHARACTER_FACTIONS = {
+  zhouqian: "九爺", shenshiyue: "九爺", jixiuyuan: "九爺",
+  chenjiashu: "紅姑娘", liwanxu: "紅姑娘", shangyu: "紅姑娘",
+  lubingbai: "隱藏鬼老",   // 他可選擇加入其他陣營，由主持人在設定分頁改
+};
 ```
 
 **`src/lib/config.ts`** — 三種數值與其可見性、8 個階段、流水帳來源類型、快捷數值
@@ -368,6 +406,8 @@ export const FINAL_TITLES = ["南洋最強贏麻了", "差一點稱霸南洋", /
 npm test                      # 日期解析、憑證解析、欄位相容性
 npm run typecheck             # TypeScript 檢查
 npm run check:sheets          # Google Sheet 連線診斷
+
+npm run build:only && npm run check:leaks   # 玩家端 bundle 有沒有洩漏機密
 ```
 
 ### 需要伺服器的測試
@@ -382,7 +422,7 @@ GOOGLE_SHEETS_SPREADSHEET_ID= GOOGLE_SERVICE_ACCOUNT_JSON= \
 GOOGLE_APPLICATION_CREDENTIALS= GOOGLE_SERVICE_ACCOUNT_EMAIL= \
 GOOGLE_PRIVATE_KEY= npx next start -p 3100 &
 
-npm run test:api              # 暱稱、批次招募、聘書（31 個案例）
+npm run test:api              # 暱稱、批次招募、聘書、陣營（51 個案例）
 npm run test:ui               # 全流程 UI（需 npm i -D playwright）
 ```
 
@@ -403,6 +443,10 @@ npm run session:remove -- 2031-08-11
 
 `tests/certificate.test.mjs` 走 API 驗聘書規則：暱稱必填、批次招募張數與餘額、
 名次對應的職位與稱號、第一二名同分時擋下發放、別人的聘書不會外洩。
+
+`tests/faction.test.mjs` 驗陣營：7 名角色入場後的陣營是否符合劇本、
+陸秉白改投其他陣營後主持台仍看得到原訂陣營、「依劇本套用」只補空的不覆蓋，
+以及最重要的——玩家端的 JSON 與選角畫面一個陣營字眼都不能出現。
 
 ---
 
