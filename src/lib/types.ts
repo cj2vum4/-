@@ -31,8 +31,12 @@ export interface SessionMeta {
   stageId: string;
   /** 主持人通行碼（雛形階段為明碼，正式版需雜湊） */
   hostPin: string;
-  /** 目前是否開放勢力招募（由主持人開啟／鎖定） */
+  /** 目前是否開放勢力招募 */
   recruitOpen: boolean;
+  /** 目前彩池屬於哪個階段，換階段時用來判斷要不要重建 */
+  poolStage: string;
+  /** 剩餘的彩池牌堆，見 recruit.ts 的 PoolToken */
+  pool: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -56,10 +60,10 @@ export interface Player {
   power: number;
   prestige: number;
   hp: number;
-  /** 本輪招募剩餘的抽取次數，未用完會在下一輪開啟時自動代抽 */
+  /** 本階段剩餘的招募抽取次數 */
   drawsRemaining: number;
-  /** 已使用的調查次數，上限見 INVESTIGATION_LIMIT */
-  investigationsUsed: number;
+  /** 抽到但還沒使用的技能卡（SKILL_CARDS 的 id），使用時要選目標 */
+  heldCards: string[];
   status: PlayerStatus;
   joinedAt: string;
   updatedAt: string;
@@ -95,11 +99,11 @@ export type LogType =
   | "join"
   | "grant"
   | "stage"
-  | "recruit"
   | "faction"
   | "branch"
   | "report"
-  | "investigate"
+  | "recruit"
+  | "skill"
   | "note";
 
 /** append-only 流水帳，永不覆寫，方便事後對帳與爭議追溯 */
@@ -150,8 +154,7 @@ export interface SelfPlayerView {
   powerRank?: number;
   hiddenBranch: HiddenBranch | "";
   drawsRemaining: number;
-  investigationsUsed: number;
-  investigationsLeft: number;
+  heldCards: string[];
 }
 
 /**
@@ -166,6 +169,12 @@ export interface MyReportView {
   /** 結算前一律為 ""，避免提前得知成敗 */
   verdict: ReportVerdict;
   settled: boolean;
+}
+
+/** 舉報成立後公開的線索卡 */
+export interface RevealedClue {
+  code: string;
+  ownerName: string;
 }
 
 export interface SessionPublicMeta {
@@ -186,8 +195,10 @@ export interface PlayerSnapshot {
   session: SessionPublicMeta;
   me: SelfPlayerView;
   players: PublicPlayerView[];
-  /** 只含自己送出的舉報；被舉報與否要靠「調查線索」才知道 */
+  /** 只含自己送出的舉報 */
   myReports: MyReportView[];
+  /** 已成立並公開的線索卡，全場都看得到 */
+  revealedClues: RevealedClue[];
   log: LogEntry[];
   rev: number;
   fetchedAt: string;
@@ -199,6 +210,9 @@ export interface HostSnapshot {
   session: SessionPublicMeta;
   players: Player[];
   reports: Report[];
+  revealedClues: RevealedClue[];
+  /** 彩池剩餘張數，主持人可據以掌握進度 */
+  poolLeft: number;
   log: LogEntry[];
   rev: number;
   fetchedAt: string;

@@ -22,7 +22,6 @@ import {
   type Faction,
 } from "@/lib/characters";
 import {
-  EXPO_LOCATIONS,
   EXPO_PICK_COUNT,
   LEDGER_SOURCES,
   PLAYER_COUNT_HINT,
@@ -132,10 +131,13 @@ function Console({
     (r) => r.verdict !== "" && !r.settled,
   ).length;
 
-  const pickedLocations = EXPO_LOCATIONS.filter((l) => locations.has(l.id));
-  const locationSum = pickedLocations.every((l) => l.power !== null)
-    ? pickedLocations.reduce((sum, l) => sum + (l.power ?? 0), 0)
-    : null;
+  const presets = stage?.presets ?? [];
+  const picked = presets.filter((l) => locations.has(l.id));
+  /** 勾選項目的數值加總；manual 的項目不計入，由主持人自行輸入 */
+  const presetPower = picked.reduce((sum, l) => sum + (l.power ?? 0), 0);
+  const presetPrestige = picked.reduce((sum, l) => sum + (l.prestige ?? 0), 0);
+  const hasManual = picked.some((l) => l.manual);
+  const presetReason = picked.map((l) => l.label).join("、");
 
   // 切換階段時把調配面板換成該階段的預設，主持人不必每次手動選
   const stageId = session?.stageId;
@@ -188,9 +190,7 @@ function Console({
           resource,
           delta,
           source,
-          reason: pickedLocations.length
-            ? `${pickedLocations.map((l) => l.name).join("、")}${reason ? `（${reason}）` : ""}`
-            : reason,
+          reason: presetReason ? `${presetReason}${reason ? `（${reason}）` : ""}` : reason,
         }),
       });
       flash(
@@ -201,6 +201,42 @@ function Console({
       await refresh();
     } catch (err) {
       handleError(err, "調配失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** 套用勾選的快捷項目：一個項目可能同時影響勢力值與威望值，所以分兩次送 */
+  async function applyPresets() {
+    if (selected.size === 0) return flash("error", "請先點選要套用的玩家");
+    if (presetPower === 0 && presetPrestige === 0) {
+      return flash("error", "勾選的項目沒有固定數值，請用下方按鈕自行輸入");
+    }
+    setBusy(true);
+    try {
+      const targets = [...selected];
+      for (const [res, delta] of [
+        ["power", presetPower],
+        ["prestige", presetPrestige],
+      ] as const) {
+        if (delta === 0) continue;
+        await api(`/api/sessions/${code}/grant`, {
+          method: "POST",
+          hostPin: pin,
+          body: JSON.stringify({
+            playerIds: targets,
+            resource: res,
+            delta,
+            source,
+            reason: presetReason,
+          }),
+        });
+      }
+      flash("success", `已套用「${presetReason}」給 ${targets.length} 人`);
+      setLocations(new Set());
+      await refresh();
+    } catch (err) {
+      handleError(err, "套用失敗");
     } finally {
       setBusy(false);
     }
@@ -406,23 +442,39 @@ function Console({
             />
           </div>
 
-          {stage?.hasLocations ? (
+          {presets.length > 0 ? (
             <Panel className="p-3">
               <SectionTitle
                 extra={
                   <span className="text-[11px] text-muted">
-                    已勾 <b className="text-gold-soft">{pickedLocations.length}</b>
-                    {locationSum !== null ? (
-                      <span className="ml-1.5 text-jade-soft">合計 {locationSum}</span>
+                    已勾 <b className="text-gold-soft">{picked.length}</b>
+                    {presetPower ? (
+                      <span className="ml-1.5 text-jade-soft">
+                        勢力 {presetPower > 0 ? "+" : ""}
+                        {presetPower}
+                      </span>
+                    ) : null}
+                    {presetPrestige ? (
+                      <span className="ml-1.5 text-gold-soft">
+                        威望 {presetPrestige > 0 ? "+" : ""}
+                        {presetPrestige}
+                      </span>
                     ) : null}
                   </span>
                 }
               >
-                地 點（{EXPO_PICK_COUNT} 選）
+                {stage?.hasLocations ? `地 點（${EXPO_PICK_COUNT} 選）` : "快 捷 項 目"}
               </SectionTitle>
+
               <div className="grid grid-cols-2 gap-1.5">
-                {EXPO_LOCATIONS.map((l, i) => {
+                {presets.map((l, i) => {
                   const on = locations.has(l.id);
+                  const value = [
+                    l.power != null && `${l.power > 0 ? "+" : ""}${l.power}勢`,
+                    l.prestige != null && `${l.prestige > 0 ? "+" : ""}${l.prestige}威`,
+                  ]
+                    .filter(Boolean)
+                    .join(" ");
                   return (
                     <label
                       key={l.id}
@@ -443,12 +495,38 @@ function Console({
                         }
                         className="h-3.5 w-3.5 shrink-0 accent-jade"
                       />
-                      <span className="tabular shrink-0 text-muted/60">{i + 1}</span>
-                      <span className="truncate">{l.name}</span>
+                      {stage?.hasLocations ? (
+                        <span className="tabular shrink-0 text-muted/60">{i + 1}</span>
+                      ) : null}
+                      <span className="min-w-0 flex-1 truncate">{l.label}</span>
+                      {value ? (
+                        <span className="tabular shrink-0 text-[10px] text-muted/70">{value}</span>
+                      ) : null}
                     </label>
                   );
                 })}
               </div>
+
+              {picked.length > 0 ? (
+                <div className="mt-2 space-y-1.5">
+                  {presetPower !== 0 || presetPrestige !== 0 ? (
+                    <Button
+                      size="sm"
+                      variant="jade"
+                      className="w-full"
+                      disabled={busy}
+                      onClick={applyPresets}
+                    >
+                      套用給已選的 {selected.size} 位玩家
+                    </Button>
+                  ) : null}
+                  {hasManual ? (
+                    <p className="text-[11px] leading-relaxed text-muted/70">
+                      勾選項目中有數值不固定的，請用下方按鈕自行輸入金額。
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
             </Panel>
           ) : null}
 
@@ -556,7 +634,17 @@ function Console({
           </Panel>
 
           <Panel className="p-3">
-            <SectionTitle>勢 力 招 募</SectionTitle>
+            <SectionTitle
+              extra={
+                snapshot && snapshot.poolLeft > 0 ? (
+                  <span className="text-[11px] text-muted">
+                    彩池剩 <b className="text-gold-soft">{snapshot.poolLeft}</b> 張
+                  </span>
+                ) : null
+              }
+            >
+              勢 力 招 募
+            </SectionTitle>
             {stage?.hasRecruit ? (
               <>
                 <div className="grid grid-cols-2 gap-2">

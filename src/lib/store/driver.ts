@@ -43,11 +43,13 @@ export const SESSION_HEADERS = [
   "狀態",
   "目前階段",
   "招募開放",
+  "彩池階段",
+  "彩池剩餘",
   "主持通行碼",
   "建立時間",
   "更新時間",
 ];
-export const SESSION_LAST_COL = "H";
+export const SESSION_LAST_COL = "J";
 
 export const PLAYER_HEADERS = [
   "玩家代碼",
@@ -61,7 +63,7 @@ export const PLAYER_HEADERS = [
   "威望值",
   "血量",
   "剩餘抽取",
-  "已調查次數",
+  "持有技能卡",
   "狀態",
   "加入時間",
   "更新時間",
@@ -107,6 +109,8 @@ export function sessionToRow(m: SessionMeta): (string | number)[] {
     m.status,
     m.stageId,
     m.recruitOpen ? "是" : "否",
+    m.poolStage,
+    m.pool.join(","),
     m.hostPin,
     m.createdAt,
     m.updatedAt,
@@ -122,9 +126,11 @@ export function rowToSession(row: unknown[]): SessionMeta | null {
     status: (str(row[2]) || "open") as SessionMeta["status"],
     stageId: str(row[3]),
     recruitOpen: bool(row[4]),
-    hostPin: str(row[5]),
-    createdAt: str(row[6]),
-    updatedAt: str(row[7]),
+    poolStage: str(row[5]),
+    pool: splitList(str(row[6])),
+    hostPin: str(row[7]),
+    createdAt: str(row[8]),
+    updatedAt: str(row[9]),
   };
 }
 
@@ -141,7 +147,7 @@ export function playerToRow(p: Player): (string | number)[] {
     p.prestige,
     p.hp,
     p.drawsRemaining,
-    p.investigationsUsed,
+    p.heldCards.join(","),
     p.status,
     p.joinedAt,
     p.updatedAt,
@@ -163,7 +169,7 @@ export function rowToPlayer(row: unknown[]): Player | null {
     prestige: num(row[8]),
     hp: num(row[9]),
     drawsRemaining: num(row[10]),
-    investigationsUsed: num(row[11]),
+    heldCards: splitList(str(row[11])),
     status: (str(row[12]) || "active") as Player["status"],
     joinedAt: str(row[13]),
     updatedAt: str(row[14]),
@@ -239,6 +245,11 @@ export function rowToReport(row: unknown[]): Report | null {
     settled: bool(row[9]),
     settledAt: str(row[10]),
   };
+}
+
+/** 試算表存的是逗號分隔字串，空字串要變成空陣列而不是 [""] */
+function splitList(v: string): string[] {
+  return v.split(",").map((x) => x.trim()).filter(Boolean);
 }
 
 function str(v: unknown): string {

@@ -15,7 +15,8 @@ import {
   StatusPill,
 } from "@/components/ui";
 import { CHARACTER_MAP, DIFFICULTY_STYLE, type Difficulty } from "@/lib/characters";
-import { INVESTIGATION_LIMIT, RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
+import { RESOURCE_MAP, STAGE_MAP } from "@/lib/config";
+import { SKILL_CARDS } from "@/lib/recruit";
 import {
   ApiError,
   api,
@@ -25,7 +26,7 @@ import {
   type PlayerIdentity,
 } from "@/lib/client";
 import { usePlayerState } from "@/lib/use-session-state";
-import type { MyReportView, PublicPlayerView, SelfPlayerView } from "@/lib/types";
+import type { MyReportView, PublicPlayerView, RevealedClue, SelfPlayerView } from "@/lib/types";
 
 interface CharacterOption {
   id: string;
@@ -359,7 +360,7 @@ function LiveBoard({
             {mine.powerRank ? (
               <StatBox label="勢力排名" value={`${mine.powerRank}`} suffix={`/ ${powerBoard.length}`} />
             ) : null}
-            <StatBox label="剩餘抽取" value={`${mine.drawsRemaining}`} suffix="次" />
+            <StatBox label="招募機會" value={`${mine.drawsRemaining}`} suffix="次" />
           </div>
 
           <Panel className="p-3.5">
@@ -377,11 +378,8 @@ function LiveBoard({
                   )
                 }
               />
-              {stage?.hasReport ? (
-                <Row
-                  label="調查剩餘"
-                  value={`${mine.investigationsLeft} / ${INVESTIGATION_LIMIT} 次`}
-                />
+              {session?.recruitOpen ? (
+                <Row label="招募機會" value={`${mine.drawsRemaining} 次`} />
               ) : null}
             </dl>
           </Panel>
@@ -457,7 +455,9 @@ function LiveBoard({
           mine={mine}
           players={(snapshot?.players ?? []).filter((p) => p.id !== mine.id)}
           myReports={snapshot?.myReports ?? []}
+          revealedClues={snapshot?.revealedClues ?? []}
           reportOpen={Boolean(stage?.hasReport)}
+          recruitOpen={Boolean(session?.recruitOpen)}
           stageLabel={stage?.label ?? ""}
         />
       ) : null}
@@ -557,10 +557,9 @@ function BoardRow({
 }
 
 /**
- * 玩家的主動操作：勢力調配（隨時）與舉報／調查（第一～三週）。
+ * 玩家的主動操作：招募抽取、技能卡、勢力調配、舉報。
  *
  * 舉報的判定結果刻意不當場回饋——依規則要等開啟下一階段才公布。
- * 玩家送出後只知道「已送出」，不知道成敗。
  */
 function PlayerActions({
   code,
@@ -568,7 +567,9 @@ function PlayerActions({
   mine,
   players,
   myReports,
+  revealedClues,
   reportOpen,
+  recruitOpen,
   stageLabel,
 }: {
   code: string;
@@ -576,24 +577,74 @@ function PlayerActions({
   mine: SelfPlayerView;
   players: PublicPlayerView[];
   myReports: MyReportView[];
+  revealedClues: RevealedClue[];
   reportOpen: boolean;
+  recruitOpen: boolean;
   stageLabel: string;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
 
-  // 轉贈
+  const [cardTargets, setCardTargets] = useState<Record<number, string>>({});
   const [giftTarget, setGiftTarget] = useState("");
   const [giftAmount, setGiftAmount] = useState("");
-
-  // 舉報
   const [target, setTarget] = useState("");
   const [clue, setClue] = useState("");
 
   function reset() {
     setError(null);
     setResult(null);
+  }
+
+  async function draw() {
+    reset();
+    setBusy(true);
+    try {
+      const d = await api<{
+        kind: "power" | "skill";
+        amount?: number;
+        card?: { name: string; description: string };
+        drawsRemaining: number;
+      }>(`/api/sessions/${code}/recruit/draw`, { method: "POST", player: me });
+      setResult(
+        d.kind === "power"
+          ? `招募所得：勢力值 +${d.amount}。剩餘 ${d.drawsRemaining} 次。`
+          : `抽中技能卡「${d.card?.name}」——${d.card?.description}。剩餘 ${d.drawsRemaining} 次。`,
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "招募失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function useCard(index: number, cardId: string) {
+    reset();
+    const targetId = cardTargets[index];
+    if (!targetId) return setError("請先選擇技能卡的目標");
+    const card = SKILL_CARDS[cardId];
+    const name = players.find((p) => p.id === targetId)?.name ?? "對方";
+    if (!confirm(`對「${name}」使用技能卡「${card?.name}」？\n${card?.description}`)) return;
+
+    setBusy(true);
+    try {
+      await api(`/api/sessions/${code}/recruit/use-card`, {
+        method: "POST",
+        player: me,
+        body: JSON.stringify({ cardId, targetId }),
+      });
+      setResult(`已對 ${name} 使用「${card?.name}」。`);
+      setCardTargets((prev) => {
+        const next = { ...prev };
+        delete next[index];
+        return next;
+      });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "使用技能卡失敗");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function transfer() {
@@ -639,64 +690,100 @@ function PlayerActions({
       setTarget("");
       setClue("");
     } catch (err) {
-      // 線索卡編號不存在時，後端回 BAD_CLUE，訊息就是「您輸入錯誤」
+      // 線索卡不存在或已被使用時，後端會給明確訊息
       setError(err instanceof ApiError ? err.message : "舉報失敗");
     } finally {
       setBusy(false);
     }
   }
 
-  async function investigate() {
-    reset();
-    if (
-      !confirm(
-        `確定要使用一次調查機會嗎？剩餘 ${mine.investigationsLeft} 次（全場上限 ${INVESTIGATION_LIMIT} 次）。`,
-      )
-    )
-      return;
-    setBusy(true);
-    try {
-      const data = await api<{ reportedCount: number; investigationsLeft: number }>(
-        `/api/sessions/${code}/investigate`,
-        { method: "POST", player: me },
-      );
-      setResult(
-        data.reportedCount > 0
-          ? `調查結果：目前有 ${data.reportedCount} 筆針對你的舉報。剩餘 ${data.investigationsLeft} 次。`
-          : `調查結果：目前沒有人舉報你。剩餘 ${data.investigationsLeft} 次。`,
-      );
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "調查失敗");
-    } finally {
-      setBusy(false);
-    }
-  }
+  const targetSelect = (value: string, onChange: (v: string) => void, placeholder: string) => (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
+    >
+      <option value="">{placeholder}</option>
+      {players.map((p) => (
+        <option key={p.id} value={p.id}>
+          {p.name}
+        </option>
+      ))}
+    </select>
+  );
 
   return (
     <div className="space-y-3">
       {error ? <Notice>{error}</Notice> : null}
       {result ? <Notice kind="success">{result}</Notice> : null}
 
+      {/* ---- 勢力招募 ---- */}
+      {recruitOpen ? (
+        <Panel className="p-3.5">
+          <SectionTitle
+            extra={<span className="text-[11px] text-muted">剩 {mine.drawsRemaining} 次</span>}
+          >
+            勢 力 招 募
+          </SectionTitle>
+          <Button
+            variant="jade"
+            className="w-full"
+            disabled={busy || mine.drawsRemaining <= 0}
+            onClick={draw}
+          >
+            {mine.drawsRemaining > 0 ? "抽取一次" : "招募機會已用完"}
+          </Button>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
+            未用完的次數會在主持人切換到下一階段時自動抽完。
+          </p>
+        </Panel>
+      ) : null}
+
+      {/* ---- 手上的技能卡 ---- */}
+      {mine.heldCards.length > 0 ? (
+        <Panel className="p-3.5">
+          <SectionTitle
+            extra={<span className="text-[11px] text-muted">{mine.heldCards.length} 張</span>}
+          >
+            技 能 卡
+          </SectionTitle>
+          <ul className="space-y-2.5">
+            {mine.heldCards.map((cardId, i) => {
+              const card = SKILL_CARDS[cardId];
+              if (!card) return null;
+              return (
+                <li key={`${cardId}-${i}`} className="rounded-lg border border-gold/40 bg-gold/8 p-3">
+                  <p className="text-sm font-bold text-gold-soft">{card.name}</p>
+                  <p className="mt-0.5 text-xs text-paper/80">{card.description}</p>
+                  <div className="mt-2 space-y-2">
+                    {targetSelect(
+                      cardTargets[i] ?? "",
+                      (v) => setCardTargets((prev) => ({ ...prev, [i]: v })),
+                      "選擇目標…",
+                    )}
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={busy}
+                      onClick={() => useCard(i, cardId)}
+                    >
+                      使用
+                    </Button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </Panel>
+      ) : null}
+
       {/* ---- 勢力調配：任何階段都能用 ---- */}
       <Panel className="p-3.5">
-        <SectionTitle
-          extra={<span className="text-[11px] text-muted">持有 {mine.power}</span>}
-        >
+        <SectionTitle extra={<span className="text-[11px] text-muted">持有 {mine.power}</span>}>
           勢 力 調 配
         </SectionTitle>
         <div className="space-y-2.5">
-          <select
-            value={giftTarget}
-            onChange={(e) => setGiftTarget(e.target.value)}
-            className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
-          >
-            <option value="">選擇轉贈對象…</option>
-            {players.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name}
-              </option>
-            ))}
-          </select>
+          {targetSelect(giftTarget, setGiftTarget, "選擇轉贈對象…")}
           <div className="flex gap-2">
             <input
               value={giftAmount}
@@ -714,46 +801,16 @@ function PlayerActions({
               轉贈
             </Button>
           </div>
-          <p className="text-[11px] leading-relaxed text-muted/70">
-            轉出後無法收回。對方會在自己的動態中看到這筆轉贈。
-          </p>
         </div>
       </Panel>
 
-      {/* ---- 舉報與調查：只在第一～三週 ---- */}
+      {/* ---- 舉報 ---- */}
       {reportOpen ? (
         <>
           <Panel className="p-3.5">
-            <SectionTitle
-              extra={<span className="text-[11px] text-muted">剩 {mine.investigationsLeft} 次</span>}
-            >
-              調 查 線 索
-            </SectionTitle>
-            <Button
-              variant="ghost"
-              className="w-full"
-              disabled={busy || mine.investigationsLeft <= 0}
-              onClick={investigate}
-            >
-              {mine.investigationsLeft > 0 ? "查詢是否有人舉報我" : "調查次數已用完"}
-            </Button>
-          </Panel>
-
-          <Panel className="p-3.5">
             <SectionTitle>我 要 舉 報</SectionTitle>
             <div className="space-y-2.5">
-              <select
-                value={target}
-                onChange={(e) => setTarget(e.target.value)}
-                className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-sm text-paper outline-none focus:border-gold/70"
-              >
-                <option value="">選擇舉報對象…</option>
-                {players.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+              {targetSelect(target, setTarget, "選擇舉報對象…")}
               <input
                 value={clue}
                 onChange={(e) => setClue(e.target.value)}
@@ -766,7 +823,7 @@ function PlayerActions({
               </Button>
               <p className="text-[11px] leading-relaxed text-muted/70">
                 線索卡若對應到被舉報者，對方威望 −1；對應到其他人，則自己威望 −1。
-                結果與威望變動會在開啟下一階段時公布。
+                每張線索卡只能用一次；舉報失敗的會在結算後釋放，可再次使用。
               </p>
             </div>
           </Panel>
@@ -797,10 +854,29 @@ function PlayerActions({
       ) : (
         <Panel className="p-3.5">
           <p className="py-2 text-center text-xs leading-relaxed text-muted/70">
-            「{stageLabel}」階段尚未開放舉報與調查。
+            「{stageLabel}」階段尚未開放舉報。
           </p>
         </Panel>
       )}
+
+      {/* ---- 已公開的線索卡：舉報成立後全場都看得到 ---- */}
+      {revealedClues.length > 0 ? (
+        <Panel className="p-3.5">
+          <SectionTitle>已 公 開 的 線 索</SectionTitle>
+          <ul className="space-y-1">
+            {revealedClues.map((c) => (
+              <li
+                key={c.code}
+                className="flex items-center gap-2 rounded border border-vermilion/30 bg-vermilion/5 px-2.5 py-1.5 text-xs"
+              >
+                <b className="tabular tracking-widest text-vermilion-soft">{c.code}</b>
+                <span className="text-muted">指向</span>
+                <b className="text-paper/85">{c.ownerName}</b>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      ) : null}
     </div>
   );
 }

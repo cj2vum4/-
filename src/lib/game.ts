@@ -12,13 +12,19 @@ import {
   DEFAULT_LEDGER_SOURCE,
   DEFAULT_STAGE,
   INITIAL_PRESTIGE,
-  INVESTIGATION_LIMIT,
   LOG_TAIL,
   RESOURCE_MAP,
   STAGE_MAP,
   type LedgerSource,
 } from "./config";
 import { GameError } from "./errors";
+import {
+  RECRUIT_POOLS,
+  SKILL_CARDS,
+  buildPool,
+  drawsForRank,
+  parseToken,
+} from "./recruit";
 import { getDriver } from "./store";
 import type {
   HostSnapshot,
@@ -33,6 +39,7 @@ import type {
   ResourceKey,
   SelfPlayerView,
   SessionMeta,
+  RevealedClue,
   SessionPublicMeta,
   SessionStatus,
 } from "./types";
@@ -58,6 +65,51 @@ const g = globalThis as unknown as {
   __jyRefreshing?: Set<string>;
 };
 const cache: Map<string, CacheEntry> = (g.__jyCache ??= new Map());
+
+/**
+ * 場次列（含招募彩池）的延後寫入。
+ *
+ * 抽招募時每次都寫回彩池的話，49 次抽取就是 49 次寫入，
+ * 加上玩家與紀錄會直接撞爆 Sheets 每分鐘 60 次的寫入配額。
+ * 玩家餘額與流水帳仍即時寫入（那些不能掉），彩池則合併成幾秒一次；
+ * 最壞情況是伺服器在這幾秒內掛掉，重啟後有少數幾張牌重複進池。
+ */
+const SESSION_SAVE_DEBOUNCE_MS = 4000;
+const pendingSessionSaves = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleSessionSave(code: string): void {
+  if (pendingSessionSaves.has(code)) return;
+  const timer = setTimeout(() => {
+    pendingSessionSaves.delete(code);
+    void withLock(code, async () => {
+      const entry = cache.get(code);
+      if (entry) await getDriver().saveSession(entry.session);
+    }).catch((err) => console.error("[九爺] 延後寫入場次失敗", code, err));
+  }, SESSION_SAVE_DEBOUNCE_MS);
+  pendingSessionSaves.set(code, timer);
+}
+
+/** 有需要立刻落地時（例如切換階段）先取消排程，避免寫兩次 */
+function cancelScheduledSessionSave(code: string): boolean {
+  const timer = pendingSessionSaves.get(code);
+  if (!timer) return false;
+  clearTimeout(timer);
+  pendingSessionSaves.delete(code);
+  return true;
+}
+
+/**
+ * 把待寫的彩池立刻落地。
+ *
+ * 重新載入前一定要先呼叫這支：否則會從試算表讀回還沒更新的舊彩池，
+ * 把記憶體中已經抽掉幾張的正確狀態蓋掉——等於憑空多出幾張牌。
+ * 只能在鎖內呼叫。
+ */
+async function flushSessionSave(code: string): Promise<void> {
+  if (!cancelScheduledSessionSave(code)) return;
+  const entry = cache.get(code);
+  if (entry) await getDriver().saveSession(entry.session);
+}
 const locks: Map<string, Promise<unknown>> = (g.__jyLocks ??= new Map());
 const refreshing: Set<string> = (g.__jyRefreshing ??= new Set());
 
@@ -79,6 +131,8 @@ function withLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
 }
 
 async function loadEntry(code: string): Promise<CacheEntry> {
+  // 先把延後寫入的彩池落地，再讀，避免讀回舊狀態
+  await flushSessionSave(code);
   const driver = getDriver();
   const session = await driver.getSession(code);
   if (!session) {
@@ -146,6 +200,24 @@ function makeLog(
   };
 }
 
+/** 舉報成立並結算後，線索卡對全場公開 */
+function revealedClues(entry: CacheEntry): RevealedClue[] {
+  return entry.reports
+    .filter((r) => r.settled && r.verdict === "success")
+    .map((r) => ({ code: r.clueCode, ownerName: r.targetName }));
+}
+
+/**
+ * 線索卡是否還能用。
+ * 使用中（尚未結算）或已成立公開的都不能再用；
+ * 舉報失敗且已結算的會釋放回來，可以再次舉報。
+ */
+function clueAvailable(entry: CacheEntry, clueCode: string): boolean {
+  return !entry.reports.some(
+    (r) => r.clueCode === clueCode && (!r.settled || r.verdict === "success"),
+  );
+}
+
 function publicMeta(s: SessionMeta): SessionPublicMeta {
   const stage = STAGE_MAP[s.stageId];
   return {
@@ -194,6 +266,8 @@ export async function createSession(input: {
       status: "open",
       stageId: DEFAULT_STAGE,
       recruitOpen: false,
+      poolStage: "",
+      pool: [],
       hostPin: input.hostPin,
       createdAt: now,
       updatedAt: now,
@@ -268,6 +342,8 @@ export async function getHostSnapshot(code: string): Promise<HostSnapshot> {
     players: entry.players.filter((p) => p.status === "active"),
     // 最新的舉報排前面，主持人才好處理待判定的
     reports: [...entry.reports].reverse(),
+    revealedClues: revealedClues(entry),
+    poolLeft: entry.session.pool.length,
     log: [...entry.log].reverse(),
     rev: entry.rev,
     fetchedAt: new Date().toISOString(),
@@ -321,8 +397,7 @@ export async function getPlayerSnapshot(
     hp: me.hp,
     hiddenBranch: me.hiddenBranch,
     drawsRemaining: me.drawsRemaining,
-    investigationsUsed: me.investigationsUsed,
-    investigationsLeft: Math.max(0, INVESTIGATION_LIMIT - me.investigationsUsed),
+    heldCards: [...me.heldCards],
   };
   if (showPrestige) self.prestige = me.prestige;
   // 名次會洩漏他人勢力值的相對高低，所以只在勢力值本來就公開時才給
@@ -347,6 +422,7 @@ export async function getPlayerSnapshot(
     me: self,
     players: active.map(toPublic),
     myReports,
+    revealedClues: revealedClues(entry),
     // 只給得到「可公開的紀錄」與「與自己有關的紀錄」
     log: [...entry.log]
       .filter((e) => e.publicVisible || e.playerId === playerId)
@@ -366,33 +442,147 @@ export async function setStage(code: string, stageId: string): Promise<SessionMe
 
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
-    // 換階段時招募一律先關閉，避免上一階段的招募狀態延續到下一階段
+    // 招募狀態由階段設定決定：第一週起自動開啟，主持人不必手動開
     const next: SessionMeta = {
       ...entry.session,
       stageId,
-      recruitOpen: false,
+      recruitOpen: stage.autoRecruit ?? false,
       updatedAt: new Date().toISOString(),
     };
-    const logs = [
+    const logs: LogEntry[] = [];
+
+    // 1. 上一階段沒用完的抽取次數要先抽完，否則彩池會累積到下一輪而超額
+    //    （彩池張數剛好等於全員抽取次數的總和）
+    logs.push(...autoDrawLeftovers(entry));
+
+    // 2. 舉報結果與威望值變動在切換階段時公布
+    logs.push(...(await settlePendingReports(entry)));
+
+    logs.push(
       makeLog({
         type: "stage",
         reason: `進入階段 ${stage.index}：${stage.label}`,
         operator: "主持人",
         publicVisible: true,
       }),
-    ];
+    );
 
+    // 3. 重建彩池並依（結算後的）威望排名發放抽取次數
+    if (RECRUIT_POOLS[stageId]) {
+      next.poolStage = stageId;
+      next.pool = buildPool(stageId);
+    }
+    if (stage.grantsDraws) {
+      logs.push(...grantDraws(entry, stage.label));
+    }
+
+    cancelScheduledSessionSave(code);
     await getDriver().saveSession(next);
-    entry.session = next;
-
-    // 依規則：舉報的結果與威望值變動要等「開啟下一個階段」才公布
-    logs.push(...(await settlePendingReports(entry)));
-
+    await getDriver().savePlayers(
+      code,
+      entry.players.filter((p) => p.status === "active"),
+    );
     await getDriver().appendLogs(code, logs);
+
+    entry.session = next;
     pushLog(entry, ...logs);
     return next;
   });
 }
+
+/**
+ * 依威望排名發放本階段的抽取次數。
+ *
+ * 名次用「序位」而非「並列」——七人各自拿到 1..7，總次數才會剛好等於彩池的 49 張。
+ * 同分時以加入場次的先後決定，結果是確定性的。
+ */
+function grantDraws(entry: CacheEntry, stageLabel: string): LogEntry[] {
+  const active = entry.players.filter((p) => p.status === "active");
+  const ordered = [...active].sort(
+    (a, b) => b.prestige - a.prestige || a.joinedAt.localeCompare(b.joinedAt),
+  );
+
+  const now = new Date().toISOString();
+  return ordered.map((player, i) => {
+    const rank = i + 1;
+    const draws = drawsForRank(rank);
+    player.drawsRemaining = draws;
+    player.updatedAt = now;
+    return makeLog({
+      type: "recruit",
+      playerId: player.id,
+      playerName: player.name,
+      reason: `${stageLabel}：威望第 ${rank} 名，獲得 ${draws} 次招募機會`,
+      operator: "系統",
+      // 抽取次數由威望排名決定，而威望本來就是公開的
+      publicVisible: true,
+    });
+  });
+}
+
+/** 把剩餘次數在換階段前抽完，並記錄結果。只能在鎖內呼叫。 */
+function autoDrawLeftovers(entry: CacheEntry): LogEntry[] {
+  const logs: LogEntry[] = [];
+  for (const player of entry.players) {
+    while (player.drawsRemaining > 0 && entry.session.pool.length > 0) {
+      logs.push(...applyDraw(entry, player, true));
+    }
+    // 彩池空了就把剩餘次數歸零，避免帶到下一階段
+    player.drawsRemaining = 0;
+  }
+  return logs;
+}
+
+/**
+ * 從彩池抽一張並套用。勢力值立即入帳；技能卡先收進手上，之後選目標再使用。
+ * 只能在鎖內呼叫，且呼叫端負責寫回資料庫。
+ */
+function applyDraw(entry: CacheEntry, player: Player, auto = false): LogEntry[] {
+  const token = entry.session.pool.shift();
+  if (!token) return [];
+
+  player.drawsRemaining = Math.max(0, player.drawsRemaining - 1);
+  player.updatedAt = new Date().toISOString();
+
+  const parsed = parseToken(token);
+  const prefix = auto ? "（未用完自動抽取）" : "";
+
+  if (parsed?.kind === "power") {
+    player.power += parsed.amount;
+    return [
+      makeLog({
+        type: "recruit",
+        playerId: player.id,
+        playerName: player.name,
+        resource: "勢力值",
+        delta: parsed.amount,
+        balanceAfter: player.power,
+        source: "勢力招募抽取",
+        reason: `${prefix}招募所得`,
+        operator: "系統",
+        // 勢力值是機密，只有本人看得到
+        publicVisible: false,
+      }),
+    ];
+  }
+
+  if (parsed?.kind === "skill") {
+    player.heldCards.push(parsed.card.id);
+    return [
+      makeLog({
+        type: "skill",
+        playerId: player.id,
+        playerName: player.name,
+        source: "勢力招募抽取",
+        reason: `${prefix}抽中技能卡「${parsed.card.name}」`,
+        operator: "系統",
+        publicVisible: false,
+      }),
+    ];
+  }
+  return [];
+}
+
 
 export async function setRecruitOpen(code: string, open: boolean): Promise<SessionMeta> {
   return withLock(code, async () => {
@@ -549,7 +739,7 @@ export async function joinSession(code: string, characterId: string): Promise<Pl
       prestige: INITIAL_PRESTIGE,
       hp: 0,
       drawsRemaining: 0,
-      investigationsUsed: 0,
+      heldCards: [],
       status: "active",
       joinedAt: now,
       updatedAt: now,
@@ -792,6 +982,9 @@ export async function submitReport(
     if (!reporter) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
     if (!target) throw new GameError("PLAYER_NOT_FOUND", "找不到被舉報的對象");
     if (reporterId === targetId) throw new GameError("BAD_REQUEST", "不能舉報自己");
+    if (!clueAvailable(entry, clueCode)) {
+      throw new GameError("BAD_CLUE", "此線索卡已被使用");
+    }
 
     // 線索卡指向的角色就是被舉報人 → 成立；指向別人 → 舉報錯誤
     const verdict: ReportVerdict =
@@ -880,57 +1073,6 @@ export async function judgeReport(
   });
 }
 
-export interface InvestigationResult {
-  reportedCount: number;
-  investigationsLeft: number;
-}
-
-/** 玩家消耗一次調查機會，查詢是否有人舉報自己。每人上限見 INVESTIGATION_LIMIT。 */
-export async function useInvestigation(
-  code: string,
-  playerId: string,
-): Promise<InvestigationResult> {
-  return withLock(code, async () => {
-    const entry = await getEntryLocked(code);
-    const player = entry.players.find((p) => p.id === playerId && p.status === "active");
-    if (!player) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
-
-    const stage = STAGE_MAP[entry.session.stageId];
-    if (!stage?.hasReport) {
-      throw new GameError("BAD_REQUEST", `目前為「${stage?.label}」階段，尚未開放調查`);
-    }
-    if (player.investigationsUsed >= INVESTIGATION_LIMIT) {
-      throw new GameError("BAD_REQUEST", `調查次數已用完（上限 ${INVESTIGATION_LIMIT} 次）`);
-    }
-
-    const reportedCount = entry.reports.filter((r) => r.targetId === playerId).length;
-    const next: Player = {
-      ...player,
-      investigationsUsed: player.investigationsUsed + 1,
-      updatedAt: new Date().toISOString(),
-    };
-    const log = makeLog({
-      type: "investigate",
-      playerId: player.id,
-      playerName: player.name,
-      reason: `使用調查線索（第 ${next.investigationsUsed} 次），查得 ${reportedCount} 筆針對自己的舉報`,
-      operator: "玩家",
-      publicVisible: false,
-    });
-
-    await getDriver().savePlayers(code, [next]);
-    await getDriver().appendLogs(code, [log]);
-
-    Object.assign(player, next);
-    pushLog(entry, log);
-
-    return {
-      reportedCount,
-      investigationsLeft: Math.max(0, INVESTIGATION_LIMIT - next.investigationsUsed),
-    };
-  });
-}
-
 // ---------------- 玩家間勢力調配 ----------------
 
 /**
@@ -1006,5 +1148,143 @@ export async function transferPower(
     Object.assign(to, nextTo);
     pushLog(entry, ...logs);
     return { balance: nextFrom.power };
+  });
+}
+
+// ---------------- 招募抽取與技能卡 ----------------
+
+export interface DrawResult {
+  kind: "power" | "skill";
+  /** 抽到勢力值時的點數 */
+  amount?: number;
+  /** 抽到技能卡時的資訊 */
+  card?: { id: string; name: string; description: string };
+  drawsRemaining: number;
+  poolLeft: number;
+}
+
+/** 玩家抽一次招募 */
+export async function drawRecruit(code: string, playerId: string): Promise<DrawResult> {
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    if (!entry.session.recruitOpen) {
+      throw new GameError("BAD_REQUEST", "目前未開放招募");
+    }
+
+    const player = entry.players.find((p) => p.id === playerId && p.status === "active");
+    if (!player) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
+    if (player.drawsRemaining <= 0) {
+      throw new GameError("BAD_REQUEST", "你已經沒有招募機會了");
+    }
+    if (entry.session.pool.length === 0) {
+      throw new GameError("BAD_REQUEST", "本階段的招募彩池已經抽完");
+    }
+
+    // 先讀出這次會抽到什麼，applyDraw 會把它從彩池取走
+    const token = entry.session.pool[0];
+    const parsed = parseToken(token);
+    const logs = applyDraw(entry, player);
+
+    // 玩家餘額與紀錄即時寫入；彩池合併延後，省下三分之一的寫入次數
+    await Promise.all([
+      getDriver().savePlayers(code, [player]),
+      getDriver().appendLogs(code, logs),
+    ]);
+    scheduleSessionSave(code);
+    pushLog(entry, ...logs);
+
+    return {
+      kind: parsed?.kind === "skill" ? "skill" : "power",
+      amount: parsed?.kind === "power" ? parsed.amount : undefined,
+      card:
+        parsed?.kind === "skill"
+          ? {
+              id: parsed.card.id,
+              name: parsed.card.name,
+              description: parsed.card.description,
+            }
+          : undefined,
+      drawsRemaining: player.drawsRemaining,
+      poolLeft: entry.session.pool.length,
+    };
+  });
+}
+
+/** 使用手上的技能卡，必須指定一位目標玩家 */
+export async function useSkillCard(
+  code: string,
+  playerId: string,
+  cardId: string,
+  targetId: string,
+): Promise<{ heldCards: string[] }> {
+  const card = SKILL_CARDS[cardId];
+  if (!card) throw new GameError("BAD_REQUEST", "未知的技能卡");
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const player = entry.players.find((p) => p.id === playerId && p.status === "active");
+    const target = entry.players.find((p) => p.id === targetId && p.status === "active");
+    if (!player) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
+    if (!target) throw new GameError("PLAYER_NOT_FOUND", "找不到目標玩家");
+    if (playerId === targetId) throw new GameError("BAD_REQUEST", "不能對自己使用");
+
+    const held = player.heldCards.indexOf(cardId);
+    if (held < 0) throw new GameError("BAD_REQUEST", "你手上沒有這張技能卡");
+
+    const now = new Date().toISOString();
+    const logs: LogEntry[] = [];
+
+    /** 產生一筆數值變動紀錄。威望公開、勢力機密。 */
+    const change = (p: Player, resource: "power" | "prestige", delta: number) => {
+      p[resource] += delta;
+      p.updatedAt = now;
+      const isPrestige = resource === "prestige";
+      logs.push(
+        makeLog({
+          type: "skill",
+          playerId: p.id,
+          playerName: p.name,
+          resource: isPrestige ? "威望值" : "勢力值",
+          delta,
+          balanceAfter: p[resource],
+          source: "技能卡效果",
+          reason: `技能卡「${card.name}」`,
+          operator: player.name,
+          publicVisible: isPrestige,
+        }),
+      );
+    };
+
+    switch (card.kind) {
+      case "stealPrestige":
+        // 只扣目標，使用者不增加
+        change(target, "prestige", -card.amount);
+        break;
+      case "stealPower": {
+        // 對方不足時只偷得到現有的部分，不會讓對方變成負數
+        const taken = Math.min(card.amount, Math.max(0, target.power));
+        change(target, "power", -taken);
+        change(player, "power", taken);
+        break;
+      }
+      case "giftPrestige":
+        change(player, "prestige", card.amount);
+        change(target, "prestige", card.amount);
+        break;
+      case "giftPower":
+        change(player, "power", card.amount);
+        change(target, "power", card.amount);
+        break;
+    }
+
+    player.heldCards.splice(held, 1);
+    player.updatedAt = now;
+
+    await Promise.all([
+      getDriver().savePlayers(code, [player, target]),
+      getDriver().appendLogs(code, logs),
+    ]);
+    pushLog(entry, ...logs);
+    return { heldCards: [...player.heldCards] };
   });
 }

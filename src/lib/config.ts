@@ -95,6 +95,12 @@ export interface StageDef {
   peerPower: "value" | "hidden";
   /** 威望值相關資訊是否出現在玩家端（含自己的）。第一週前完全不提威望。 */
   showPrestige: boolean;
+  /** 主持人的快捷核選項目 */
+  presets?: StagePreset[];
+  /** 進入此階段時是否自動開啟招募（不需主持人手動開） */
+  autoRecruit?: boolean;
+  /** 進入此階段時是否依威望排名發放抽取次數 */
+  grantsDraws?: boolean;
 }
 
 /**
@@ -128,6 +134,17 @@ export const STAGES: StageDef[] = [
     quickDeltas: [10, 20, 50, 100],
     peerPower: "value",
     showPrestige: false,
+    presets: [
+      { id: "fulu", label: "福祿早茶鋪", manual: true },
+      { id: "zhonghua", label: "中華養生堂", manual: true },
+      { id: "hutou", label: "虎頭幫", manual: true },
+      { id: "jinyin", label: "金銀賭坊", manual: true },
+      { id: "baichun", label: "百春武館", manual: true },
+      { id: "fenghua", label: "風花歌舞廳", manual: true },
+      { id: "jiale", label: "家樂百貨行", manual: true },
+      { id: "nanpai", label: "南派美食街", manual: true },
+      { id: "yongle", label: "永樂錢莊", manual: true },
+    ],
   },
   {
     id: "week1",
@@ -142,6 +159,14 @@ export const STAGES: StageDef[] = [
     quickDeltas: [1, 2, 3, 5],
     peerPower: "hidden",
     showPrestige: true,
+    // 第一週起招募系統自動開啟，但這一階段還不發抽取次數
+    autoRecruit: true,
+    presets: [
+      { id: "treasure", label: "開啟九爺金庫的寶箱", power: 800 },
+      { id: "key", label: "花紋金鑰匙", power: 500 },
+      { id: "jade", label: "廟街隱藏麒麟玉珮", power: 500 },
+      { id: "assistant", label: "當選會長助理", power: 200 },
+    ],
   },
   {
     id: "week2",
@@ -156,6 +181,9 @@ export const STAGES: StageDef[] = [
     quickDeltas: [1, 2, 3, 5],
     peerPower: "hidden",
     showPrestige: true,
+    autoRecruit: true,
+    grantsDraws: true,
+    presets: [{ id: "frame", label: "陷害九爺", power: -300, prestige: -2 }],
   },
   {
     id: "week3",
@@ -170,6 +198,15 @@ export const STAGES: StageDef[] = [
     quickDeltas: [100, 200, 300, 500],
     peerPower: "hidden",
     showPrestige: true,
+    autoRecruit: true,
+    grantsDraws: true,
+    presets: [
+      { id: "nanshan", label: "南山武館", power: 2000 },
+      { id: "broadway", label: "百老匯音樂廳", power: 1500 },
+      { id: "nanya", label: "南亞種植園", power: 2500 },
+      { id: "doujin", label: "斗金典當行", power: 2000 },
+      { id: "huamanlou", label: "南洋花滿樓", manual: true },
+    ],
   },
   {
     id: "gunfight",
@@ -182,6 +219,14 @@ export const STAGES: StageDef[] = [
     quickDeltas: [1, 2, 3],
     peerPower: "hidden",
     showPrestige: true,
+    autoRecruit: true,
+    grantsDraws: true,
+    presets: [
+      { id: "out1", label: "首輪被淘汰", power: 800 },
+      { id: "out2", label: "第二輪被淘汰", power: 1000 },
+      { id: "out3", label: "第三輪被淘汰", power: 1200 },
+      { id: "survive", label: "存活", power: 1400 },
+    ],
   },
   {
     id: "final",
@@ -207,30 +252,21 @@ export const DEFAULT_STAGE = STAGES[0].id;
 export const QUICK_DELTAS = [1, 5, 10, 50, 100];
 
 /**
- * 拓展會的 9 個地點，玩家 9 選 3。
+ * 主持人的階段快捷核選項目。
  *
- * power 目前為 null＝各地點的勢力值尚未提供，主持人勾選後自行輸入金額；
- * 之後補上數字，勾選就會自動加總。
+ * 勾選後會把名稱寫進紀錄事由；有設定數值的會自動加總，
+ * 沒設定（manual）的由主持人自行輸入金額。
+ * 一個項目可以同時影響勢力值與威望值（例如「陷害九爺」）。
  */
-export interface ExpoLocation {
+export interface StagePreset {
   id: string;
-  name: string;
-  power: number | null;
+  label: string;
+  power?: number;
+  prestige?: number;
+  /** 數值不固定，需要主持人現場決定 */
+  manual?: boolean;
 }
 
-export const EXPO_LOCATIONS: ExpoLocation[] = [
-  { id: "fulu", name: "福祿早茶鋪", power: null },
-  { id: "zhonghua", name: "中華養生堂", power: null },
-  { id: "hutou", name: "虎頭幫", power: null },
-  { id: "jinyin", name: "金銀賭坊", power: null },
-  { id: "baichun", name: "百春武館", power: null },
-  { id: "fenghua", name: "風花歌舞廳", power: null },
-  { id: "jiale", name: "家樂百貨行", power: null },
-  { id: "nanpai", name: "南派美食街", power: null },
-  { id: "yongle", name: "永樂錢莊", power: null },
-];
-
-/** 劇本規則：每位玩家從 9 個地點中選 3 個 */
 export const EXPO_PICK_COUNT = 3;
 
 /** 記錄頁最多回傳幾筆給前端 */
@@ -244,5 +280,4 @@ export const PLAYER_COUNT_HINT = "本劇本為固定 7 人，角色皆可反串"
 /** 每位玩家的威望值初始值 */
 export const INITIAL_PRESTIGE = 10;
 
-/** 調查線索的每人次數上限 */
-export const INVESTIGATION_LIMIT = 2;
+
