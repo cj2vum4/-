@@ -37,6 +37,7 @@ export async function GET(_req: Request, ctx: { params: Promise<{ code: string }
         personality: c.personality,
         appearance: c.appearance,
         note: c.note ?? null,
+        poster: c.poster ?? null,
         taken: !available.has(c.id),
       })),
     });

@@ -645,31 +645,54 @@ function Console({
             >
               勢 力 招 募
             </SectionTitle>
-            {stage?.hasRecruit ? (
+            {stage?.autoRecruit ? (
               <>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    size="sm"
-                    variant="jade"
-                    disabled={busy || session?.recruitOpen}
-                    onClick={() => post("/recruit", { open: true }, "招募已開啟", "開啟招募失敗")}
-                  >
-                    開啟招募
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy || !session?.recruitOpen}
-                    onClick={() => post("/recruit", { open: false }, "招募已鎖定", "鎖定招募失敗")}
-                  >
-                    鎖定招募
-                  </Button>
-                </div>
-
+                <p className="text-[11px] leading-relaxed text-muted/80">
+                  本階段招募已自動開啟，不需手動操作。
+                  {stage.grantsDraws
+                    ? "進入本階段時已依威望排名發放抽取次數。"
+                    : "本階段不發放抽取次數。"}
+                </p>
+                {stage.grantsDraws ? (
+                  <>
+                    <div className="mt-2 space-y-1">
+                      {players.map((p) => (
+                        <div key={p.id} className="flex items-center gap-2 text-xs">
+                          <span className="min-w-0 flex-1 truncate text-paper/85">{p.name}</span>
+                          <span className="tabular text-muted">威望 {p.prestige}</span>
+                          <span
+                            className={`tabular w-14 text-right ${
+                              p.drawsRemaining > 0 ? "text-jade-soft" : "text-muted/50"
+                            }`}
+                          >
+                            剩 {p.drawsRemaining} 次
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="mt-2 w-full"
+                      disabled={busy}
+                      onClick={() => {
+                        if (
+                          !confirm(
+                            "重新發放本階段的招募次數並重建彩池？\n已抽到的勢力值與技能卡不會退回。",
+                          )
+                        )
+                          return;
+                        void post("/recruit", {}, "已重新發放招募次數", "重新發放失敗");
+                      }}
+                    >
+                      重新發放招募次數
+                    </Button>
+                  </>
+                ) : null}
               </>
             ) : (
               <p className="text-[11px] leading-relaxed text-muted/70">
-                「{stage?.label}」沒有勢力招募。招募只在第一～三週開放。
+                「{stage?.label}」沒有招募。招募從第一週開始自動開啟。
               </p>
             )}
           </Panel>

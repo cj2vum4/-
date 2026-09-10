@@ -225,7 +225,8 @@ function publicMeta(s: SessionMeta): SessionPublicMeta {
     title: s.title,
     status: s.status,
     stageId: s.stageId,
-    recruitOpen: s.recruitOpen,
+    // 由階段推導而非讀儲存值：改版前建立的場次不會卡在舊旗標上
+    recruitOpen: stage?.autoRecruit ?? false,
     updatedAt: s.updatedAt,
     peerPower: stage?.peerPower ?? "hidden",
     showPrestige: stage?.showPrestige ?? false,
@@ -1167,8 +1168,9 @@ export interface DrawResult {
 export async function drawRecruit(code: string, playerId: string): Promise<DrawResult> {
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
-    if (!entry.session.recruitOpen) {
-      throw new GameError("BAD_REQUEST", "目前未開放招募");
+    const stage = STAGE_MAP[entry.session.stageId];
+    if (!stage?.autoRecruit) {
+      throw new GameError("BAD_REQUEST", `「${stage?.label ?? "本階段"}」沒有招募`);
     }
 
     const player = entry.players.find((p) => p.id === playerId && p.status === "active");
@@ -1286,5 +1288,41 @@ export async function useSkillCard(
     ]);
     pushLog(entry, ...logs);
     return { heldCards: [...player.heldCards] };
+  });
+}
+
+/**
+ * 重新發放本階段的招募次數並重建彩池。
+ *
+ * 用於補救：改版前建立的場次停在某個階段時，沒有經過「切換階段」這個動作，
+ * 因此從來沒拿到抽取次數，玩家會看到招募但無法抽。
+ */
+export async function resetRecruit(code: string): Promise<{ draws: number; poolLeft: number }> {
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const stage = STAGE_MAP[entry.session.stageId];
+    if (!stage?.grantsDraws) {
+      throw new GameError("BAD_REQUEST", `「${stage?.label ?? "本階段"}」不發放招募次數`);
+    }
+
+    entry.session.poolStage = entry.session.stageId;
+    entry.session.pool = buildPool(entry.session.stageId);
+    entry.session.updatedAt = new Date().toISOString();
+
+    const logs = grantDraws(entry, `${stage.label}（重新發放）`);
+
+    cancelScheduledSessionSave(code);
+    await getDriver().saveSession(entry.session);
+    await getDriver().savePlayers(
+      code,
+      entry.players.filter((p) => p.status === "active"),
+    );
+    await getDriver().appendLogs(code, logs);
+    pushLog(entry, ...logs);
+
+    return {
+      draws: entry.players.reduce((sum, p) => sum + p.drawsRemaining, 0),
+      poolLeft: entry.session.pool.length,
+    };
   });
 }

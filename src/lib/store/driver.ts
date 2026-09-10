@@ -118,6 +118,8 @@ export function sessionToRow(m: SessionMeta): (string | number)[] {
 }
 
 const ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T/;
+/** 舊玩家列在「持有技能卡」的位置放的是調查次數，是純數字 */
+const LEGACY_NUMERIC = /^\d+$/;
 
 /**
  * 讀取場次列，同時相容新舊兩種欄位配置。
@@ -183,7 +185,9 @@ export function rowToPlayer(row: unknown[]): Player | null {
     prestige: num(row[8]),
     hp: num(row[9]),
     drawsRemaining: num(row[10]),
-    heldCards: splitList(str(row[11])),
+    // 這一欄改版前是「已調查次數」（純數字），現在是「持有技能卡」。
+    // 純數字代表是舊資料，當成沒有技能卡，否則會冒出 id 為 "0" 的假卡。
+    heldCards: LEGACY_NUMERIC.test(str(row[11])) ? [] : splitList(str(row[11])),
     status: (str(row[12]) || "active") as Player["status"],
     joinedAt: str(row[13]),
     updatedAt: str(row[14]),

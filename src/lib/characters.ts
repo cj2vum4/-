@@ -19,6 +19,8 @@ export interface CharacterDef {
   appearance: string;
   /** 額外備註，例如婚姻狀態 */
   note?: string;
+  /** 角色海報。目前指向外部圖床，之後可換成專案內的檔案。 */
+  poster?: string;
   /** 是否使用隱藏分支機制（目前僅陸秉白） */
   hasHiddenBranch?: boolean;
 }
@@ -33,6 +35,7 @@ export const CHARACTERS: CharacterDef[] = [
     occupation: "船業老闆",
     personality: "溫和謙遜，彬彬有禮，但生氣時說話刻薄",
     appearance: "戴著金絲邊眼鏡，短髮，穿著一絲不苟的西裝",
+    poster: "https://i.postimg.cc/h47zNmMH/zhou-qian.jpg",
   },
   {
     id: "shenshiyue",
@@ -44,6 +47,7 @@ export const CHARACTERS: CharacterDef[] = [
     personality: "溫柔恬靜，優雅端莊的大家小姐",
     appearance: "長髮綰成低髮髻，身穿白色旗袍，外罩披肩",
     note: "已婚",
+    poster: "https://i.postimg.cc/Y2mGTFbK/shen-shi-yue.jpg",
   },
   {
     id: "jixiuyuan",
@@ -54,6 +58,7 @@ export const CHARACTERS: CharacterDef[] = [
     occupation: "賭場老闆",
     personality: "冷峻，不苟言笑，表情比較嚴肅",
     appearance: "脖子和耳下有燒傷，短髮，戴黑色帽子，身穿西裝和黑色長風衣",
+    poster: "https://i.postimg.cc/VkzJSV1r/ji-xiu-yuan.jpg",
   },
   {
     id: "liwanxu",
@@ -64,6 +69,7 @@ export const CHARACTERS: CharacterDef[] = [
     occupation: "商會採購",
     personality: "目光堅韌，有勇有謀",
     appearance: "劍眉星目，長披肩髮，身穿上衣下裳的民國服飾",
+    poster: "https://i.postimg.cc/9QcD4nVr/li-wan-xu.jpg",
   },
   {
     id: "shangyu",
@@ -75,6 +81,7 @@ export const CHARACTERS: CharacterDef[] = [
     personality: "明豔熱烈",
     appearance:
       "美麗得讓人移不開眼睛，眼角有一顆淚痣，紅唇，短捲髮，穿著修身的黑色帶紅花紋的旗袍",
+    poster: "https://i.postimg.cc/CMfB98J9/shang-yu.jpg",
   },
   {
     id: "chenjiashu",
@@ -85,6 +92,7 @@ export const CHARACTERS: CharacterDef[] = [
     occupation: "貨行老闆",
     personality: "笑面虎，平時總是笑咪咪的，對人溫和好脾氣，但行事果斷狠辣",
     appearance: "短髮，身穿墨藍色馬褂長衫",
+    poster: "https://i.postimg.cc/QdjFBysW/chen-jia-shu.jpg",
   },
   {
     id: "lubingbai",
@@ -96,6 +104,7 @@ export const CHARACTERS: CharacterDef[] = [
     personality: "痞氣，瀟灑不羈，講義氣，喜歡喝酒，和手底下的兄弟們打成一片",
     appearance: "短髮，身穿襯衫長褲，領口敞開",
     hasHiddenBranch: true,
+    poster: "https://i.postimg.cc/bY2D4nLV/lu-bing-bai.jpg",
   },
 ];
 

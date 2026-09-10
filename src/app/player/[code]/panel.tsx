@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { CharacterPoster } from "@/components/character-poster";
 import { LogFeed } from "@/components/log-feed";
 import { AppShell, SectionTitle, ShellHeader, type TabDef } from "@/components/mobile-shell";
 import { ResourceStat } from "@/components/resource-stat";
@@ -38,6 +39,7 @@ interface CharacterOption {
   personality: string;
   appearance: string;
   note: string | null;
+  poster: string | null;
   taken: boolean;
 }
 
@@ -168,6 +170,13 @@ function CharacterPicker({
                           : "border-line bg-panel-2/60"
                     }`}
                   >
+                    <div className="flex gap-3">
+                      <CharacterPoster
+                        src={c.poster}
+                        alt={c.name}
+                        className="h-20 w-16 shrink-0 rounded border border-line object-cover"
+                      />
+                      <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className={`text-base font-bold ${on ? "text-gold-soft" : "text-paper"}`}>
                         {c.name}
@@ -199,6 +208,8 @@ function CharacterPicker({
                     <p className="mt-0.5 text-[11px] leading-relaxed text-muted/65">
                       {c.appearance}
                     </p>
+                      </div>
+                    </div>
                   </button>
                 </li>
               );
@@ -464,6 +475,16 @@ function LiveBoard({
 
       {tab === "role" && character ? (
         <div className="space-y-3">
+          {character.poster ? (
+            <Panel className="overflow-hidden p-0">
+              <CharacterPoster
+                src={character.poster}
+                alt={character.name}
+                className="w-full object-contain"
+              />
+            </Panel>
+          ) : null}
+
           <Panel className="p-3.5">
             <SectionTitle>基 本 設 定</SectionTitle>
             <dl className="space-y-1.5 text-sm">
@@ -717,36 +738,58 @@ function PlayerActions({
       {error ? <Notice>{error}</Notice> : null}
       {result ? <Notice kind="success">{result}</Notice> : null}
 
-      {/* ---- 勢力招募 ---- */}
-      {recruitOpen ? (
-        <Panel className="p-3.5">
-          <SectionTitle
-            extra={<span className="text-[11px] text-muted">剩 {mine.drawsRemaining} 次</span>}
-          >
-            勢 力 招 募
-          </SectionTitle>
-          <Button
-            variant="jade"
-            className="w-full"
-            disabled={busy || mine.drawsRemaining <= 0}
-            onClick={draw}
-          >
-            {mine.drawsRemaining > 0 ? "抽取一次" : "招募機會已用完"}
-          </Button>
-          <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
-            未用完的次數會在主持人切換到下一階段時自動抽完。
+      {/* ---- 勢力招募：永遠顯示，沒得抽時說明原因，才不會讓人以為功能不見了 ---- */}
+      <Panel className="p-3.5">
+        <SectionTitle
+          extra={
+            recruitOpen ? (
+              <span className="text-[11px] text-muted">剩 {mine.drawsRemaining} 次</span>
+            ) : null
+          }
+        >
+          勢 力 招 募
+        </SectionTitle>
+        {!recruitOpen ? (
+          <p className="py-1 text-center text-xs leading-relaxed text-muted/70">
+            「{stageLabel}」階段沒有招募。
+            <br />
+            招募從第一週開始，第二週、第三週、第六幕會各發一次機會。
           </p>
-        </Panel>
-      ) : null}
+        ) : (
+          <>
+            <Button
+              variant="jade"
+              className="w-full"
+              disabled={busy || mine.drawsRemaining <= 0}
+              onClick={draw}
+            >
+              {mine.drawsRemaining > 0 ? `抽取一次（剩 ${mine.drawsRemaining} 次）` : "招募機會已用完"}
+            </Button>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
+              {mine.drawsRemaining > 0
+                ? "可能抽到勢力值，也可能抽到技能卡。未用完的次數會在主持人切換到下一階段時自動抽完。"
+                : "下一個階段開始時會再發放新的機會。"}
+            </p>
+          </>
+        )}
+      </Panel>
 
-      {/* ---- 手上的技能卡 ---- */}
-      {mine.heldCards.length > 0 ? (
-        <Panel className="p-3.5">
-          <SectionTitle
-            extra={<span className="text-[11px] text-muted">{mine.heldCards.length} 張</span>}
-          >
-            技 能 卡
-          </SectionTitle>
+      {/* ---- 手上的技能卡：永遠顯示，沒有卡時也說明 ---- */}
+      <Panel className="p-3.5">
+        <SectionTitle
+          extra={
+            mine.heldCards.length > 0 ? (
+              <span className="text-[11px] text-muted">{mine.heldCards.length} 張</span>
+            ) : null
+          }
+        >
+          技 能 卡
+        </SectionTitle>
+        {mine.heldCards.length === 0 ? (
+          <p className="py-1 text-center text-xs leading-relaxed text-muted/70">
+            目前沒有技能卡。招募時有機會抽到，抽到後會出現在這裡，選好目標即可使用。
+          </p>
+        ) : (
           <ul className="space-y-2.5">
             {mine.heldCards.map((cardId, i) => {
               const card = SKILL_CARDS[cardId];
@@ -774,8 +817,8 @@ function PlayerActions({
               );
             })}
           </ul>
-        </Panel>
-      ) : null}
+        )}
+      </Panel>
 
       {/* ---- 勢力調配：任何階段都能用 ---- */}
       <Panel className="p-3.5">
