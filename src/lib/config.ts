@@ -79,6 +79,8 @@ export interface StageDef {
   hasRecruit?: boolean;
   /** 此階段是否開放玩家舉報與調查 */
   hasReport?: boolean;
+  /** 此階段是否進行拍賣結算 */
+  hasAuction?: boolean;
   /** 此階段是否顯示拓展會的地點核選 */
   hasLocations?: boolean;
   /** 進入此階段時，調配面板預設要調的數值 */
@@ -193,13 +195,9 @@ export const STAGES: StageDef[] = [
     showPrestige: true,
     autoRecruit: true,
     grantsDraws: true,
-    presets: [
-      { id: "nanshan", label: "南山武館", power: 2000 },
-      { id: "broadway", label: "百老匯音樂廳", power: 1500 },
-      { id: "nanya", label: "南亞種植園", power: 2500 },
-      { id: "doujin", label: "斗金典當行", power: 2000 },
-      { id: "huamanlou", label: "南洋花滿樓", manual: true },
-    ],
+    // 拍賣改由「階段」分頁的拍賣結算面板處理（先扣出價、再入帳真實價值）。
+    // 這裡不再放快捷核選，免得又被加一次價值卻沒扣到錢。
+    hasAuction: true,
   },
   {
     id: "gunfight",
@@ -291,6 +289,32 @@ export interface StagePreset {
   /** 數值不固定，需要主持人現場決定 */
   manual?: boolean;
 }
+
+/**
+ * 拍賣的 5 個標的。
+ *
+ * 玩家出多少錢由現場喊價決定，主持人事後輸入；標的的「真實價值」則是固定的，
+ * 得標者先扣掉付出的錢，再拿到這個價值，差額就是賺賠。
+ * 南洋花滿樓的價值不固定，要主持人現場輸入。
+ */
+export interface AuctionLot {
+  id: string;
+  label: string;
+  /** 真實價值；null 表示不固定，由主持人輸入 */
+  value: number | null;
+}
+
+export const AUCTION_LOTS: AuctionLot[] = [
+  { id: "nanshan", label: "南山武館", value: 2000 },
+  { id: "broadway", label: "百老匯音樂廳", value: 1500 },
+  { id: "nanya", label: "南亞種植園", value: 2500 },
+  { id: "doujin", label: "斗金典當行", value: 2000 },
+  { id: "huamanlou", label: "南洋花滿樓", value: null },
+];
+
+export const AUCTION_LOT_MAP: Record<string, AuctionLot> = Object.fromEntries(
+  AUCTION_LOTS.map((l) => [l.id, l]),
+);
 
 export const EXPO_PICK_COUNT = 3;
 

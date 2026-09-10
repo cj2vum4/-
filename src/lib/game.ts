@@ -9,6 +9,7 @@ import {
   type HiddenBranch,
 } from "./characters";
 import {
+  AUCTION_LOT_MAP,
   DEFAULT_LEDGER_SOURCE,
   DEFAULT_STAGE,
   INITIAL_PRESTIGE,
@@ -478,6 +479,9 @@ export async function getPlayerSnapshot(
       .filter((e) => visibleToPlayer(e, playerId))
       // 威望相關的紀錄在第一週前不該出現
       .filter((e) => showPrestige || e.resource !== "威望值")
+      // 來源類型只給主持台。玩家端從來不顯示它，留在 JSON 裡只會洩漏
+      // 「這 −1 是舉報來的」這種依規則不該公布的明細
+      .map(({ source: _hidden, ...rest }): LogEntry => ({ ...rest, source: "" }))
       .reverse(),
     rev: entry.rev,
     fetchedAt: new Date().toISOString(),
@@ -1286,6 +1290,106 @@ export async function transferPower(
     Object.assign(to, nextTo);
     pushLog(entry, ...logs);
     return { balance: nextFrom.power };
+  });
+}
+
+// ---------------- 拍賣結算 ----------------
+
+export interface AuctionResult {
+  lotLabel: string;
+  paid: number;
+  value: number;
+  /** 賺賠：真實價值減去出價 */
+  net: number;
+  balance: number;
+}
+
+/**
+ * 拍賣結算。
+ *
+ * 現場喊價，主持人事後輸入得標者付了多少錢；系統先扣掉出價，再入帳標的的
+ * 真實價值，差額就是這一標賺還是賠。兩筆分開記帳，玩家才看得懂錢的來去。
+ *
+ * 出價超過餘額會擋下來並報出目前餘額——那多半是打錯字，讓勢力值變負數
+ * 之後很難查。
+ */
+export async function settleAuction(
+  code: string,
+  input: { playerId: string; lotId: string; paid: number; value?: number },
+): Promise<AuctionResult> {
+  const lot = AUCTION_LOT_MAP[input.lotId];
+  if (!lot) throw new GameError("BAD_REQUEST", "沒有這個拍賣標的");
+
+  const paid = Number(input.paid);
+  if (!Number.isFinite(paid) || !Number.isInteger(paid) || paid < 0) {
+    throw new GameError("BAD_REQUEST", "出價請填 0 以上的整數");
+  }
+
+  // 價值固定的標的用設定值；南洋花滿樓要主持人現場輸入
+  let value: number;
+  if (lot.value === null) {
+    const raw = Number(input.value);
+    if (!Number.isFinite(raw) || !Number.isInteger(raw)) {
+      throw new GameError("BAD_REQUEST", `「${lot.label}」的價值不固定，請一併輸入`);
+    }
+    value = raw;
+  } else {
+    value = lot.value;
+  }
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const player = entry.players.find((p) => p.id === input.playerId && p.status === "active");
+    if (!player) throw new GameError("PLAYER_NOT_FOUND", "找不到該玩家");
+
+    if (paid > player.power) {
+      throw new GameError(
+        "BAD_REQUEST",
+        `${player.name} 目前只有 ${player.power} 勢力值，付不出 ${paid}`,
+      );
+    }
+
+    const now = new Date().toISOString();
+    const afterPaid = player.power - paid;
+    const balance = afterPaid + value;
+
+    const logs: LogEntry[] = [
+      makeLog({
+        type: "grant",
+        playerId: player.id,
+        playerName: player.name,
+        resource: "勢力值",
+        delta: -paid,
+        balanceAfter: afterPaid,
+        source: "拍賣扣款",
+        reason: `拍得「${lot.label}」`,
+        operator: "主持人",
+        // 勢力值只有本人看得到
+        publicVisible: false,
+      }),
+      makeLog({
+        type: "grant",
+        playerId: player.id,
+        playerName: player.name,
+        resource: "勢力值",
+        delta: value,
+        balanceAfter: balance,
+        source: "拍賣結算",
+        reason: `「${lot.label}」的真實價值`,
+        operator: "主持人",
+        publicVisible: false,
+      }),
+    ];
+
+    const next: Player = { ...player, power: balance, updatedAt: now };
+    await Promise.all([
+      getDriver().savePlayers(code, [next]),
+      getDriver().appendLogs(code, logs),
+    ]);
+
+    Object.assign(player, next);
+    pushLog(entry, ...logs);
+    return { lotLabel: lot.label, paid, value, net: value - paid, balance };
   });
 }
 

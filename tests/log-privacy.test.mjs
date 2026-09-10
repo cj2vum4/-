@@ -119,6 +119,76 @@ ok(
   JSON.stringify(mineAfter).slice(0, 400),
 );
 
+// ---- 當事人必須看得到自己被扣的那一筆 ----
+// 「構陷」扣的是目標的威望，被陰的人要知道自己被扣了，只是不知道是誰做的
+const victim = other;
+const attacker = third;
+const beforeVictim = (await call(`/${CODE}/state`, { headers: asPlayer(victim) })).json.me.prestige;
+
+// 讓 attacker 手上一定有構陷卡：直接抽到有為止（彩池有限，抽完就算了）
+let framed = false;
+for (let i = 0; i < 8 && !framed; i++) {
+  const st = (await call(`/${CODE}/state`, { headers: asPlayer(attacker) })).json;
+  if (st.me.drawsRemaining <= 0) break;
+  await call(`/${CODE}/recruit/draw`, {
+    method: "POST",
+    headers: asPlayer(attacker),
+    body: { times: 1 },
+  });
+  const after = (await call(`/${CODE}/state`, { headers: asPlayer(attacker) })).json;
+  if (after.me.heldCards.includes("w2_steal_prestige")) framed = true;
+}
+
+if (framed) {
+  const used = await call(`/${CODE}/recruit/use-card`, {
+    method: "POST",
+    headers: asPlayer(attacker),
+    body: { cardId: "w2_steal_prestige", targetId: victim.id },
+  });
+  ok("構陷成功送出", used.status === 200, JSON.stringify(used.json));
+
+  const victimLog = (await call(`/${CODE}/state`, { headers: asPlayer(victim) })).json.log;
+  ok(
+    "被構陷的人看得到自己被扣威望",
+    victimLog.some((e) => e.type === "skill" && e.playerId === victim.id && e.resource === "威望值"),
+    JSON.stringify(victimLog).slice(0, 400),
+  );
+  check(
+    "被構陷的人威望確實少了",
+    (await call(`/${CODE}/state`, { headers: asPlayer(victim) })).json.me.prestige,
+    beforeVictim - 1,
+  );
+
+  // 第三人不該看到這件事
+  const bystanderLog = (await call(`/${CODE}/state`, { headers: asPlayer(me) })).json.log;
+  ok(
+    "旁人看不到別人被構陷",
+    !bystanderLog.some((e) => e.playerId === victim.id && e.resource === "威望值"),
+    JSON.stringify(bystanderLog).slice(0, 400),
+  );
+} else {
+  console.log("  SKIP  這輪沒抽到構陷卡，跳過技能卡可見性檢查");
+}
+
+// 舉報結算：輸的那個人（這裡是舉報失敗的 third）要看得到自己被扣
+const reporterLog = (await call(`/${CODE}/state`, { headers: asPlayer(third) })).json.log;
+ok(
+  "舉報失敗的人看得到自己被扣威望",
+  reporterLog.some((e) => e.type === "report" && e.playerId === third.id && e.delta === -1),
+  JSON.stringify(reporterLog).slice(0, 400),
+);
+// 結算那一筆事由必須留白——「只顯示數字的結果」。
+// 「提出舉報」「遭到舉報」那兩筆有事由是對的，那是本人自己的行為。
+ok(
+  "結算那筆不揭露明細",
+  reporterLog
+    .filter((e) => e.type === "report" && e.playerId === third.id && e.delta === -1)
+    .every((e) => !e.reason && !e.source),
+  JSON.stringify(
+    reporterLog.filter((e) => e.type === "report" && e.delta === -1),
+  ).slice(0, 400),
+);
+
 // ---- 場次層級與現場本來就看得見的事件仍保留 ----
 ok("看得到換階段", mineAfter.some((e) => e.type === "stage"), "階段變化應該公開");
 ok("看得到別人入場", mineAfter.some((e) => e.type === "join" && e.playerId !== me.id), "入場是公開的");

@@ -22,6 +22,8 @@ import {
   type Faction,
 } from "@/lib/characters";
 import {
+  AUCTION_LOTS,
+  AUCTION_LOT_MAP,
   EXPO_PICK_COUNT,
   LEDGER_SOURCES,
   PLAYER_COUNT_HINT,
@@ -700,6 +702,14 @@ function Console({
             )}
           </Panel>
 
+          <AuctionPanel
+            code={code}
+            pin={pin}
+            players={players}
+            stageId={session?.stageId ?? ""}
+            onDone={refresh}
+          />
+
           <CertificatePanel
             players={players}
             stageId={session?.stageId ?? ""}
@@ -1026,6 +1036,150 @@ function CertificatePanel({
             發放後玩家在「我的」分頁就會看到自己的聘書。
           </p>
         </>
+      )}
+    </Panel>
+  );
+}
+/**
+ * 拍賣結算。
+ *
+ * 現場喊價，主持人在這裡輸入誰得標、付了多少；系統先扣出價再入帳標的的真實
+ * 價值，賺賠一次算清。價值是劇本固定的，所以主持人只要填出價就好——
+ * 南洋花滿樓例外，它的價值不固定，要一起填。
+ */
+function AuctionPanel({
+  code,
+  pin,
+  players,
+  stageId,
+  onDone,
+}: {
+  code: string;
+  pin: string;
+  players: Player[];
+  stageId: string;
+  onDone: () => Promise<unknown>;
+}) {
+  const stage = STAGE_MAP[stageId];
+  const [lotId, setLotId] = useState(AUCTION_LOTS[0].id);
+  const [playerId, setPlayerId] = useState("");
+  const [paid, setPaid] = useState("");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const lot = AUCTION_LOT_MAP[lotId];
+  const needsValue = lot?.value === null;
+
+  async function submit() {
+    setError(null);
+    setResult(null);
+    if (!playerId) return setError("請選擇得標的玩家");
+    if (!paid.trim()) return setError("請輸入得標者付了多少勢力值");
+
+    setBusy(true);
+    try {
+      const r = await api<{
+        lotLabel: string;
+        paid: number;
+        value: number;
+        net: number;
+        balance: number;
+      }>(`/api/sessions/${code}/auction`, {
+        method: "POST",
+        hostPin: pin,
+        body: JSON.stringify({
+          playerId,
+          lotId,
+          paid: Number(paid),
+          value: needsValue ? Number(value) : undefined,
+        }),
+      });
+      const name = players.find((p) => p.id === playerId)?.name ?? "得標者";
+      setResult(
+        `${name} 拍得「${r.lotLabel}」：付出 ${r.paid}，價值 ${r.value}，` +
+          `${r.net >= 0 ? `賺 ${r.net}` : `賠 ${-r.net}`}，餘額 ${r.balance}。`,
+      );
+      setPaid("");
+      setValue("");
+      await onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "拍賣結算失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel className="p-3">
+      <SectionTitle>拍 賣 結 算</SectionTitle>
+
+      {!stage?.hasAuction ? (
+        <p className="text-[11px] leading-relaxed text-muted/70">
+          拍賣在「第三週：拍賣」進行。切到該階段後就能在這裡結算。
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {error ? <Notice>{error}</Notice> : null}
+          {result ? <Notice kind="success">{result}</Notice> : null}
+
+          <select
+            value={lotId}
+            onChange={(e) => {
+              setLotId(e.target.value);
+              setResult(null);
+            }}
+            className="w-full rounded border border-line bg-lacquer px-2 py-2 text-sm text-paper outline-none focus:border-gold/70"
+          >
+            {AUCTION_LOTS.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.label}
+                {l.value === null ? "（價值現場決定）" : `（價值 ${l.value}）`}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={playerId}
+            onChange={(e) => setPlayerId(e.target.value)}
+            className="w-full rounded border border-line bg-lacquer px-2 py-2 text-sm text-paper outline-none focus:border-gold/70"
+          >
+            <option value="">選擇得標的玩家…</option>
+            {players.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}（勢力 {p.power}）
+              </option>
+            ))}
+          </select>
+
+          <div className="flex gap-1.5">
+            <input
+              value={paid}
+              onChange={(e) => setPaid(e.target.value)}
+              placeholder="得標價"
+              inputMode="numeric"
+              className="min-w-0 flex-1 rounded border border-line bg-lacquer px-2 py-2 text-sm text-paper outline-none focus:border-gold/70"
+            />
+            {needsValue ? (
+              <input
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                placeholder="真實價值"
+                inputMode="numeric"
+                className="min-w-0 flex-1 rounded border border-line bg-lacquer px-2 py-2 text-sm text-paper outline-none focus:border-gold/70"
+              />
+            ) : null}
+            <Button disabled={busy} onClick={submit}>
+              結算
+            </Button>
+          </div>
+
+          <p className="text-[11px] leading-relaxed text-muted/70">
+            送出後先扣得標價，再入帳標的的真實價值，差額就是這一標的賺賠。
+            玩家只看得到自己的那兩筆。
+          </p>
+        </div>
       )}
     </Panel>
   );
