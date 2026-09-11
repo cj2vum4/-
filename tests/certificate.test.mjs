@@ -5,7 +5,8 @@
  *   GOOGLE_SHEETS_SPREADSHEET_ID= GOOGLE_SERVICE_ACCOUNT_JSON= npx next start -p 3100
  *   node tests/certificate.test.mjs
  */
-import { asPlayer, call, hostHeaders, makeChecker, openSession } from "./helpers.mjs";
+import { asPlayer, call, castAllVotes, hostHeaders, makeChecker, openSession }
+  from "./helpers.mjs";
 
 const { check, ok, done } = makeChecker();
 
@@ -67,11 +68,14 @@ const week1 = await call(`/${CODE}/state`, { headers: asPlayer(players[0]) });
 check("第一週招募開放", week1.json.session.recruitOpen, true);
 check("第一週不發招募次數", week1.json.me.drawsRemaining, 0);
 
+// 第一週結束前全場必須投完票，否則換不了階段
+await castAllVotes(CODE, players);
 await call(`/${CODE}/stage`, { method: "POST", headers: host, body: { stageId: "week2" } });
 const before = await call(`/${CODE}/state`, { headers: asPlayer(players[0]) });
 const drawsBefore = before.json.me.drawsRemaining;
 ok("第二週有發招募次數", drawsBefore > 0, `drawsRemaining=${drawsBefore}`);
 
+const powerBeforeDraw = before.json.me.power;
 const one = await call(`/${CODE}/recruit/draw`, {
   method: "POST",
   headers: asPlayer(players[0]),
@@ -95,9 +99,10 @@ const powerFromItems = five.json.items
 check("powerGained 等於各張勢力值加總", five.json.powerGained, powerFromItems);
 
 const afterDraw = await call(`/${CODE}/state`, { headers: asPlayer(players[0]) });
+// 用差額比對而不是絕對值——這個玩家可能同時拿到票選的會長助理獎勵
 check(
-  "勢力值餘額對得上",
-  afterDraw.json.me.power,
+  "抽到的勢力值都入帳了",
+  afterDraw.json.me.power - powerBeforeDraw,
   one.json.powerGained + five.json.powerGained,
 );
 

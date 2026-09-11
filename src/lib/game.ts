@@ -9,6 +9,8 @@ import {
   type HiddenBranch,
 } from "./characters";
 import {
+  ASSISTANT_POWER,
+  ASSISTANT_TITLE,
   AUCTION_LOT_MAP,
   DEFAULT_LEDGER_SOURCE,
   DEFAULT_STAGE,
@@ -16,6 +18,9 @@ import {
   LOG_TAIL,
   RESOURCE_MAP,
   STAGE_MAP,
+  VOTE_APPROVE_COUNT,
+  VOTE_OPPOSE_COUNT,
+  VOTE_PRESTIGE,
   positionForRank,
   titleForRank,
   type LedgerSource,
@@ -38,6 +43,9 @@ import type {
   ReportVerdict,
   LogEntry,
   LogType,
+  Vote,
+  VoteKind,
+  VoteProgress,
   Player,
   PlayerSnapshot,
   PublicPlayerView,
@@ -59,6 +67,7 @@ interface CacheEntry {
   session: SessionMeta;
   players: Player[];
   reports: Report[];
+  votes: Vote[];
   log: LogEntry[];
   rev: number;
   loadedAt: number;
@@ -147,11 +156,12 @@ async function loadEntry(code: string): Promise<CacheEntry> {
 
   // 已封存的場次三個工作分頁都刪了。這裡若照常去讀，ensureTab 會把空分頁
   // 重新建回來，看起來就像資料被清空——所以直接回空的，不碰儲存層。
-  const [players, reports, log] = session.archived
-    ? [[] as Player[], [] as Report[], [] as LogEntry[]]
+  const [players, reports, votes, log] = session.archived
+    ? [[] as Player[], [] as Report[], [] as Vote[], [] as LogEntry[]]
     : await Promise.all([
         driver.listPlayers(code),
         driver.listReports(code).catch(() => [] as Report[]),
+        driver.listVotes(code).catch(() => [] as Vote[]),
         driver.listLog(code, LOG_TAIL),
       ]);
 
@@ -159,6 +169,7 @@ async function loadEntry(code: string): Promise<CacheEntry> {
     session,
     players,
     reports,
+    votes,
     log,
     rev: (cache.get(code)?.rev ?? 0) + 1,
     loadedAt: Date.now(),
@@ -249,6 +260,7 @@ function publicMeta(s: SessionMeta): SessionPublicMeta {
     stageId: s.stageId,
     // 由階段推導而非讀儲存值：改版前建立的場次不會卡在舊旗標上
     recruitOpen: stage?.autoRecruit ?? false,
+    hasVote: stage?.hasVote ?? false,
     updatedAt: s.updatedAt,
     peerPower: stage?.peerPower ?? "hidden",
     showPrestige: stage?.showPrestige ?? false,
@@ -444,6 +456,9 @@ export async function getHostSnapshot(code: string): Promise<HostSnapshot> {
     scriptFactions: Object.fromEntries(
       entry.players.map((p) => [p.characterId, scriptFaction(p.characterId)]),
     ),
+    // 只給「還剩幾張」，不給票型——主持人在紀錄分頁才看得到誰投給誰
+    voteProgress: voteProgress(entry),
+    allVotesCast: allVotesCast(entry),
     log: [...entry.log].reverse(),
     rev: entry.rev,
     fetchedAt: new Date().toISOString(),
@@ -526,6 +541,17 @@ export async function getPlayerSnapshot(
     nickname: me.nickname,
     certificate: buildCertificate(me, code),
   };
+  if (stage?.hasVote) {
+    const progress = voteProgress(entry).find((v) => v.playerId === me.id);
+    self.votesLeft = {
+      approve: progress?.approveLeft ?? 0,
+      oppose: progress?.opposeLeft ?? 0,
+    };
+    // 只給自己投過誰，別人的票型一概不給
+    self.votedTargetIds = entry.votes
+      .filter((v) => v.voterId === me.id)
+      .map((v) => v.targetId);
+  }
   if (showPrestige) self.prestige = me.prestige;
   // 名次會洩漏他人勢力值的相對高低，所以只在勢力值本來就公開時才給
   if (peerPower === "value") self.powerRank = ranks.get(me.id);
@@ -571,6 +597,20 @@ export async function setStage(code: string, stageId: string): Promise<SessionMe
 
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
+    const from = STAGE_MAP[entry.session.stageId];
+    const leavingVote = Boolean(from?.hasVote) && stageId !== entry.session.stageId;
+
+    // 票沒投完不讓走。結算要靠完整票型，缺一張結果就不對了。
+    if (leavingVote && !allVotesCast(entry)) {
+      const waiting = voteProgress(entry).filter((p) => p.totalLeft > 0);
+      throw new GameError(
+        "BAD_REQUEST",
+        `還有 ${waiting.length} 位玩家沒投完票（${waiting
+          .map((p) => `${p.playerName} 剩 ${p.totalLeft} 張`)
+          .join("、")}），投完才能進入下一階段`,
+      );
+    }
+
     // 招募狀態由階段設定決定：第一週起自動開啟，主持人不必手動開
     const next: SessionMeta = {
       ...entry.session,
@@ -587,6 +627,12 @@ export async function setStage(code: string, stageId: string): Promise<SessionMe
     // 2. 舉報結果與威望值變動在切換階段時公布
     logs.push(...(await settlePendingReports(entry)));
 
+    // 3. 離開第一週時結算票型：加減威望，並選出會長助理。
+    //    綁在「離開」而不是「進入第二週」，主持人若直接跳到第三週也不會漏算。
+    if (leavingVote) {
+      logs.push(...settleVotes(entry));
+    }
+
     logs.push(
       makeLog({
         type: "stage",
@@ -596,7 +642,7 @@ export async function setStage(code: string, stageId: string): Promise<SessionMe
       }),
     );
 
-    // 3. 重建彩池並依（結算後的）威望排名發放抽取次數
+    // 4. 重建彩池並依（結算後的）威望排名發放抽取次數
     if (RECRUIT_POOLS[stageId]) {
       next.poolStage = stageId;
       next.pool = buildPool(stageId);
@@ -872,6 +918,7 @@ async function archiveLocked(entry: CacheEntry): Promise<void> {
   entry.session = next;
   entry.players = [];
   entry.reports = [];
+  entry.votes = [];
   entry.log = [];
 }
 
@@ -929,6 +976,16 @@ function buildArchiveRows(entry: CacheEntry, log: LogEntry[]): (string | number)
         r.verdict === "success" ? "成立" : r.verdict === "fail" ? "不成立" : "未判定",
         r.settled ? "是" : "否",
       ]);
+    }
+  }
+
+  rows.push([], ["【投票】"]);
+  if (entry.votes.length === 0) {
+    rows.push(["（無）"]);
+  } else {
+    rows.push(["時間", "投票人", "被投人", "票種"]);
+    for (const v of entry.votes) {
+      rows.push([v.ts, v.voterName, v.targetName, v.kind === "approve" ? "同意" : "不同意"]);
     }
   }
 
@@ -1549,6 +1606,195 @@ export async function transferPower(
     pushLog(entry, ...logs);
     return { balance: nextFrom.power };
   });
+}
+
+// ---------------- 第一週投票 ----------------
+
+/**
+ * 一個人總共要投幾張。
+ *
+ * 通常是 3 張（同意 2 + 不同意 1），但三張票必須投給三個不同的人，
+ * 所以人不夠時就投不滿——場上 3 個人時每人只能投 2 張。
+ * 沒有這個上限，「全部投完才能進第二週」的閘門在小場次會永遠卡住。
+ */
+function voteQuota(activeCount: number): { approve: number; oppose: number; total: number } {
+  const targets = Math.max(0, activeCount - 1);
+  const approve = Math.min(VOTE_APPROVE_COUNT, targets);
+  const oppose = Math.min(VOTE_OPPOSE_COUNT, Math.max(0, targets - approve));
+  return { approve, oppose, total: approve + oppose };
+}
+
+/** 每個人還剩幾張票沒投。主持人看得到這個，但看不到投給誰。 */
+export function voteProgress(entry: CacheEntry): VoteProgress[] {
+  const active = entry.players.filter((p) => p.status === "active");
+  const quota = voteQuota(active.length);
+
+  return active.map((p) => {
+    const mine = entry.votes.filter((v) => v.voterId === p.id);
+    const approveUsed = mine.filter((v) => v.kind === "approve").length;
+    const opposeUsed = mine.filter((v) => v.kind === "oppose").length;
+    const approveLeft = Math.max(0, quota.approve - approveUsed);
+    const opposeLeft = Math.max(0, quota.oppose - opposeUsed);
+    return {
+      playerId: p.id,
+      playerName: p.name,
+      approveLeft,
+      opposeLeft,
+      totalLeft: approveLeft + opposeLeft,
+    };
+  });
+}
+
+/** 全場都投完了嗎。沒投完不讓進下一階段。 */
+export function allVotesCast(entry: CacheEntry): boolean {
+  return voteProgress(entry).every((p) => p.totalLeft === 0);
+}
+
+/** 玩家投一張票 */
+export async function castVote(
+  code: string,
+  voterId: string,
+  targetId: string,
+  kind: VoteKind,
+): Promise<{ approveLeft: number; opposeLeft: number }> {
+  if (kind !== "approve" && kind !== "oppose") {
+    throw new GameError("BAD_REQUEST", "未知的票種");
+  }
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    const stage = STAGE_MAP[entry.session.stageId];
+    if (!stage?.hasVote) {
+      throw new GameError("BAD_REQUEST", `「${stage?.label ?? "本階段"}」沒有投票`);
+    }
+
+    const active = entry.players.filter((p) => p.status === "active");
+    const voter = active.find((p) => p.id === voterId);
+    if (!voter) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
+
+    const target = active.find((p) => p.id === targetId);
+    if (!target) throw new GameError("PLAYER_NOT_FOUND", "找不到這位玩家");
+    if (target.id === voter.id) throw new GameError("BAD_REQUEST", "不能投給自己");
+
+    const mine = entry.votes.filter((v) => v.voterId === voter.id);
+    // 三張票要投給三個不同的人，所以只要投過就不能再投——不分票種
+    if (mine.some((v) => v.targetId === target.id)) {
+      throw new GameError("BAD_REQUEST", `你已經投過「${target.name}」了`);
+    }
+
+    const quota = voteQuota(active.length);
+    const used = mine.filter((v) => v.kind === kind).length;
+    const limit = kind === "approve" ? quota.approve : quota.oppose;
+    if (used >= limit) {
+      throw new GameError(
+        "BAD_REQUEST",
+        kind === "approve" ? "你的同意票已經用完了" : "你的不同意票已經用完了",
+      );
+    }
+
+    const now = new Date().toISOString();
+    const vote: Vote = {
+      id: `V${nanoId()}`,
+      ts: now,
+      voterId: voter.id,
+      voterName: voter.name,
+      targetId: target.id,
+      targetName: target.name,
+      kind,
+    };
+
+    const log = makeLog({
+      type: "vote",
+      playerId: voter.id,
+      playerName: voter.name,
+      reason: `投給 ${target.name}：${kind === "approve" ? "同意" : "不同意"}`,
+      operator: "系統",
+      // 票型只有主持人在紀錄裡看得到，其他玩家一概不知
+      publicVisible: false,
+    });
+
+    await getDriver().createVote(code, vote);
+    await getDriver().appendLogs(code, [log]);
+
+    entry.votes.push(vote);
+    pushLog(entry, log);
+
+    const approveUsed = mine.filter((v) => v.kind === "approve").length + (kind === "approve" ? 1 : 0);
+    const opposeUsed = mine.filter((v) => v.kind === "oppose").length + (kind === "oppose" ? 1 : 0);
+    return {
+      approveLeft: Math.max(0, quota.approve - approveUsed),
+      opposeLeft: Math.max(0, quota.oppose - opposeUsed),
+    };
+  });
+}
+
+/**
+ * 投票結算。離開第一週時執行，只能在鎖內呼叫。
+ *
+ * 一張票 1 點威望，同意加、不同意減；結算後威望最高的人當選會長助理，
+ * 額外拿 200 勢力。平票比勢力，勢力也一樣就比入場順序。
+ */
+function settleVotes(entry: CacheEntry): LogEntry[] {
+  if (entry.votes.length === 0) return [];
+
+  const active = entry.players.filter((p) => p.status === "active");
+  const now = new Date().toISOString();
+  const logs: LogEntry[] = [];
+
+  for (const player of active) {
+    const got = entry.votes.filter((v) => v.targetId === player.id);
+    const approve = got.filter((v) => v.kind === "approve").length;
+    const oppose = got.filter((v) => v.kind === "oppose").length;
+    const delta = (approve - oppose) * VOTE_PRESTIGE;
+    if (delta === 0) continue;
+
+    player.prestige += delta;
+    player.updatedAt = now;
+    logs.push(
+      makeLog({
+        type: "vote",
+        playerId: player.id,
+        playerName: player.name,
+        resource: "威望值",
+        delta,
+        balanceAfter: player.prestige,
+        source: "投票獎勵",
+        reason: `票選結果：同意 ${approve}、不同意 ${oppose}`,
+        operator: "系統",
+        // 別人的威望變動一律不公開，玩家只看得到自己那一筆
+        publicVisible: false,
+      }),
+    );
+  }
+
+  // 會長助理：威望最高 → 勢力最高 → 入場最早
+  const winner = [...active].sort(
+    (a, b) =>
+      b.prestige - a.prestige ||
+      b.power - a.power ||
+      a.joinedAt.localeCompare(b.joinedAt),
+  )[0];
+
+  if (winner) {
+    winner.power += ASSISTANT_POWER;
+    winner.updatedAt = now;
+    logs.push(
+      makeLog({
+        type: "vote",
+        playerId: winner.id,
+        playerName: winner.name,
+        resource: "勢力值",
+        delta: ASSISTANT_POWER,
+        balanceAfter: winner.power,
+        source: "投票獎勵",
+        reason: ASSISTANT_TITLE,
+        operator: "系統",
+        publicVisible: false,
+      }),
+    );
+  }
+
+  return logs;
 }
 
 // ---------------- 拍賣結算 ----------------

@@ -1,10 +1,11 @@
-import type { LogEntry, Player, Report, SessionMeta } from "../types";
+import type { LogEntry, Player, Report, SessionMeta, Vote } from "../types";
 import type { ArchiveSheet, StoreDriver } from "./driver";
 
 interface Bucket {
   meta: SessionMeta;
   players: Player[];
   reports: Report[];
+  votes: Vote[];
   log: LogEntry[];
   /** 封存後的彙整內容，對應 Sheets 的彙整分頁 */
   archive?: (string | number)[][];
@@ -34,7 +35,7 @@ export class MemoryDriver implements StoreDriver {
   }
 
   async createSession(meta: SessionMeta): Promise<void> {
-    buckets.set(meta.code, { meta: { ...meta }, players: [], reports: [], log: [] });
+    buckets.set(meta.code, { meta: { ...meta }, players: [], reports: [], votes: [], log: [] });
   }
 
   async saveSession(meta: SessionMeta): Promise<void> {
@@ -57,6 +58,14 @@ export class MemoryDriver implements StoreDriver {
       const i = list.findIndex((p) => p.id === player.id);
       if (i >= 0) list[i] = { ...player };
     }
+  }
+
+  async listVotes(code: string): Promise<Vote[]> {
+    return (buckets.get(code)?.votes ?? []).map((v) => ({ ...v }));
+  }
+
+  async createVote(code: string, vote: Vote): Promise<void> {
+    buckets.get(code)?.votes.push({ ...vote });
   }
 
   async listReports(code: string): Promise<Report[]> {
@@ -93,6 +102,7 @@ export class MemoryDriver implements StoreDriver {
     bucket.archive = sheet.rows.map((r) => [...r]);
     bucket.players = [];
     bucket.reports = [];
+    bucket.votes = [];
     bucket.log = [];
   }
 }

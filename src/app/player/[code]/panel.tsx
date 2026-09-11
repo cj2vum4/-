@@ -548,7 +548,9 @@ function LiveBoard({
           revealedClues={snapshot?.revealedClues ?? []}
           reportOpen={Boolean(stage?.hasReport)}
           recruitOpen={Boolean(session?.recruitOpen)}
+          hasVote={Boolean(session?.hasVote)}
           stageLabel={stage?.label ?? ""}
+          onVoted={refresh}
         />
       ) : null}
 
@@ -783,7 +785,9 @@ function PlayerActions({
   revealedClues,
   reportOpen,
   recruitOpen,
+  hasVote,
   stageLabel,
+  onVoted,
 }: {
   code: string;
   me: PlayerIdentity;
@@ -793,7 +797,9 @@ function PlayerActions({
   revealedClues: RevealedClue[];
   reportOpen: boolean;
   recruitOpen: boolean;
+  hasVote: boolean;
   stageLabel: string;
+  onVoted: () => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -804,6 +810,36 @@ function PlayerActions({
   const [giftAmount, setGiftAmount] = useState("");
   const [target, setTarget] = useState("");
   const [clue, setClue] = useState("");
+  const [voteTarget, setVoteTarget] = useState("");
+
+  const votesLeft = mine.votesLeft ?? { approve: 0, oppose: 0 };
+  const votedIds = new Set(mine.votedTargetIds ?? []);
+  // 三張票要投給三個不同的人，所以投過的就從名單上收起來
+  const voteCandidates = players.filter((p) => p.id !== mine.id && !votedIds.has(p.id));
+
+  async function vote(kind: "approve" | "oppose") {
+    reset();
+    if (!voteTarget) return setError("請先選擇要投的對象");
+    const name = players.find((p) => p.id === voteTarget)?.name ?? "對方";
+    const label = kind === "approve" ? "同意" : "不同意";
+    if (!confirm(`投「${label}」給 ${name}？\n投出去不能收回。`)) return;
+
+    setBusy(true);
+    try {
+      await api(`/api/sessions/${code}/votes`, {
+        method: "POST",
+        player: me,
+        body: JSON.stringify({ targetId: voteTarget, kind }),
+      });
+      setResult(`已投給 ${name}：${label}。`);
+      setVoteTarget("");
+      await onVoted();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "投票失敗");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   function reset() {
     setError(null);
@@ -924,6 +960,74 @@ function PlayerActions({
     <div className="space-y-3">
       {error ? <Notice>{error}</Notice> : null}
       {result ? <Notice kind="success">{result}</Notice> : null}
+
+      {/* ---- 競選會長助理的投票，只在第一週出現 ---- */}
+      {hasVote ? (
+        <Panel className="p-3.5">
+          <SectionTitle
+            extra={
+              <span className="text-[11px] text-muted">
+                同意 {votesLeft.approve}・不同意 {votesLeft.oppose}
+              </span>
+            }
+          >
+            競 選 投 票
+          </SectionTitle>
+
+          {votesLeft.approve + votesLeft.oppose === 0 ? (
+            <p className="py-1 text-center text-xs leading-relaxed text-muted/70">
+              你的票都投完了。
+              <br />
+              等大家投完，主持人開啟下一階段時就會公布結果。
+            </p>
+          ) : (
+            <>
+              <select
+                value={voteTarget}
+                onChange={(e) => setVoteTarget(e.target.value)}
+                className="w-full rounded border border-line bg-lacquer px-2 py-2 text-sm text-paper outline-none focus:border-gold/70"
+              >
+                <option value="">選擇要投的對象…</option>
+                {voteCandidates.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <Button
+                  variant="jade"
+                  disabled={busy || !voteTarget || votesLeft.approve <= 0}
+                  onClick={() => vote("approve")}
+                >
+                  同意（{votesLeft.approve}）
+                </Button>
+                <Button
+                  variant="danger"
+                  disabled={busy || !voteTarget || votesLeft.oppose <= 0}
+                  onClick={() => vote("oppose")}
+                >
+                  不同意（{votesLeft.oppose}）
+                </Button>
+              </div>
+
+              <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
+                同意票 2 張、不同意票 1 張，三張要投給三個不同的人，也不能投自己。
+                投出去不能收回，結果在下一階段公布。
+                {voteCandidates.length === 0 ? (
+                  <>
+                    <br />
+                    <span className="text-vermilion-soft">
+                      已經沒有可投的對象了（場上人數不足）。
+                    </span>
+                  </>
+                ) : null}
+              </p>
+            </>
+          )}
+        </Panel>
+      ) : null}
 
       {/* ---- 勢力招募：永遠顯示，沒得抽時說明原因，才不會讓人以為功能不見了 ---- */}
       <Panel className="p-3.5">

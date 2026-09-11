@@ -1,6 +1,6 @@
 import type { Faction, HiddenBranch } from "../characters";
 import type { LedgerSource } from "../config";
-import type { LogEntry, Player, Report, ReportVerdict, SessionMeta } from "../types";
+import type { LogEntry, Player, Report, ReportVerdict, SessionMeta, Vote, VoteKind } from "../types";
 
 /**
  * 儲存層介面。
@@ -21,6 +21,9 @@ export interface StoreDriver {
   createPlayer(code: string, player: Player): Promise<void>;
   /** 一次寫回多位玩家。全體發放時若逐筆呼叫 API，人一多就要等十幾秒 */
   savePlayers(code: string, players: Player[]): Promise<void>;
+
+  listVotes(code: string): Promise<Vote[]>;
+  createVote(code: string, vote: Vote): Promise<void>;
 
   listReports(code: string): Promise<Report[]>;
   createReport(code: string, report: Report): Promise<void>;
@@ -47,6 +50,7 @@ export const sessionsTabName = () => "場次總表";
 export const playersTabName = (code: string) => `${code}_玩家`;
 export const logTabName = (code: string) => `${code}_紀錄`;
 export const reportsTabName = (code: string) => `${code}_舉報`;
+export const votesTabName = (code: string) => `${code}_投票`;
 /** 封存後的彙整分頁，名稱就是場次代碼（也就是當天日期） */
 export const archiveTabName = (code: string) => code;
 
@@ -86,6 +90,17 @@ export const PLAYER_HEADERS = [
   "聘書名次",
 ];
 export const PLAYER_LAST_COL = "Q";
+
+export const VOTE_HEADERS = [
+  "投票代碼",
+  "時間",
+  "投票人代碼",
+  "投票人",
+  "被投人代碼",
+  "被投人",
+  "票種",
+];
+export const VOTE_LAST_COL = "G";
 
 export const REPORT_HEADERS = [
   "舉報代碼",
@@ -252,6 +267,32 @@ export function rowToLog(row: unknown[]): LogEntry | null {
     reason: str(row[8]),
     operator: str(row[9]),
     publicVisible: bool(row[10]),
+  };
+}
+
+export function voteToRow(v: Vote): (string | number)[] {
+  return [
+    v.id,
+    v.ts,
+    v.voterId,
+    v.voterName,
+    v.targetId,
+    v.targetName,
+    v.kind === "approve" ? "同意" : "不同意",
+  ];
+}
+
+export function rowToVote(row: unknown[]): Vote | null {
+  const id = str(row[0]);
+  if (!id) return null;
+  return {
+    id,
+    ts: str(row[1]),
+    voterId: str(row[2]),
+    voterName: str(row[3]),
+    targetId: str(row[4]),
+    targetName: str(row[5]),
+    kind: (str(row[6]) === "不同意" ? "oppose" : "approve") as VoteKind,
   };
 }
 

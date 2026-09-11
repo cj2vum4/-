@@ -1,6 +1,6 @@
 import { google, type sheets_v4 } from "googleapis";
 import { readCredentials } from "./credentials";
-import type { LogEntry, Player, Report, SessionMeta } from "../types";
+import type { LogEntry, Player, Report, SessionMeta, Vote } from "../types";
 import {
   LOG_HEADERS,
   LOG_LAST_COL,
@@ -8,6 +8,8 @@ import {
   PLAYER_LAST_COL,
   REPORT_HEADERS,
   REPORT_LAST_COL,
+  VOTE_HEADERS,
+  VOTE_LAST_COL,
   SESSION_HEADERS,
   SESSION_LAST_COL,
   logTabName,
@@ -15,11 +17,14 @@ import {
   playerToRow,
   playersTabName,
   reportToRow,
+  voteToRow,
+  votesTabName,
   archiveTabName,
   reportsTabName,
   rowToLog,
   rowToPlayer,
   rowToReport,
+  rowToVote,
   rowToSession,
   sessionToRow,
   sessionsTabName,
@@ -374,6 +379,19 @@ export class SheetsDriver implements StoreDriver {
 
   // ---- 舉報 ----
 
+  async listVotes(code: string): Promise<Vote[]> {
+    await this.init();
+    const rows = await this.readRows(votesTabName(code), VOTE_LAST_COL);
+    return rows.map(rowToVote).filter((v): v is Vote => v !== null);
+  }
+
+  async createVote(code: string, vote: Vote): Promise<void> {
+    await this.init();
+    const tab = votesTabName(code);
+    await this.ensureTab(tab, VOTE_HEADERS);
+    await this.appendRow(tab, voteToRow(vote));
+  }
+
   async listReports(code: string): Promise<Report[]> {
     await this.init();
     const tab = reportsTabName(code);
@@ -465,7 +483,12 @@ export class SheetsDriver implements StoreDriver {
       }),
     );
 
-    await this.deleteTabs([playersTabName(code), logTabName(code), reportsTabName(code)]);
+    await this.deleteTabs([
+      playersTabName(code),
+      logTabName(code),
+      reportsTabName(code),
+      votesTabName(code),
+    ]);
   }
 
   /** 刪掉指定分頁。不存在的直接略過，重複封存也不會出錯。 */

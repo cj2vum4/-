@@ -722,6 +722,61 @@ function Console({
 
       {/* ---------- 舉報判定 ---------- */}
       {tab === "report" ? (
+        <div className="space-y-3">
+        {/* 投票進度：只顯示「還剩幾張」，票型要到紀錄分頁才看得到 */}
+        {stage?.hasVote ? (
+          <Panel className="p-3">
+            <SectionTitle
+              extra={
+                snapshot?.allVotesCast ? (
+                  <span className="rounded-full border border-jade/50 bg-jade/10 px-2 py-0.5 text-[11px] text-jade-soft">
+                    全部投完
+                  </span>
+                ) : (
+                  <span className="rounded-full border border-vermilion/50 bg-vermilion/10 px-2 py-0.5 text-[11px] text-vermilion-soft">
+                    還有人沒投
+                  </span>
+                )
+              }
+            >
+              競 選 投 票 進 度
+            </SectionTitle>
+
+            {(snapshot?.voteProgress ?? []).length === 0 ? (
+              <p className="py-3 text-center text-xs text-muted/70">尚無玩家</p>
+            ) : (
+              <ul className="space-y-1">
+                {(snapshot?.voteProgress ?? []).map((v) => (
+                  <li key={v.playerId} className="flex items-center gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate text-paper/85">{v.playerName}</span>
+                    {v.totalLeft === 0 ? (
+                      <span className="text-jade-soft">已投完</span>
+                    ) : (
+                      <>
+                        <span className="tabular text-muted">
+                          同意 {v.approveLeft}・不同意 {v.opposeLeft}
+                        </span>
+                        <span className="tabular w-14 text-right text-vermilion-soft">
+                          剩 {v.totalLeft} 張
+                        </span>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
+              誰投給誰不顯示在這裡，要到「紀錄」分頁才看得到票型。
+              全部投完才能切換到下一階段；結算時一張票 1 點威望，
+              威望最高的人自動獲得「當選會長助理」+200 勢力
+              （平票比勢力，再平比入場順序）。
+              <br />
+              有人臨時離場投不了的話，到「設定」分頁把他移出場次，進度就不會再等他。
+            </p>
+          </Panel>
+        ) : null}
+
         <Panel className="p-3">
           <SectionTitle
             extra={
@@ -774,6 +829,7 @@ function Console({
             威望值會在你切換到下一階段時一併結算，玩家端只看得到數字，看不到明細。
           </p>
         </Panel>
+        </div>
       ) : null}
 
       {/* ---------- 設定 ---------- */}

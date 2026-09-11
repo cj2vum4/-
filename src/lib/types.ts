@@ -124,6 +124,35 @@ export interface Report {
   settledAt: string;
 }
 
+/** 投票種類 */
+export type VoteKind = "approve" | "oppose";
+
+/**
+ * 第一週的一張票。
+ *
+ * 一人一列，三張票就是三列。刻意記下投給誰——主持人在紀錄裡要看得到票型，
+ * 但玩家端永遠拿不到（見 getPlayerSnapshot）。
+ */
+export interface Vote {
+  id: string;
+  ts: string;
+  voterId: string;
+  voterName: string;
+  targetId: string;
+  targetName: string;
+  kind: VoteKind;
+}
+
+/** 投票進度。主持人看得到「還剩幾張沒投」，但看不到投給誰 */
+export interface VoteProgress {
+  playerId: string;
+  playerName: string;
+  approveLeft: number;
+  opposeLeft: number;
+  /** 這個人還能投幾張（人數不足時會少於手上的張數） */
+  totalLeft: number;
+}
+
 export type LogType =
   | "session"
   | "join"
@@ -135,6 +164,7 @@ export type LogType =
   | "recruit"
   | "skill"
   | "cert"
+  | "vote"
   | "note";
 
 /** append-only 流水帳，永不覆寫，方便事後對帳與爭議追溯 */
@@ -189,6 +219,10 @@ export interface SelfPlayerView {
   nickname: string;
   /** 已發放的聘書；未發放時為 null */
   certificate: Certificate | null;
+  /** 自己還有幾張票沒投（只在投票階段出現） */
+  votesLeft?: { approve: number; oppose: number };
+  /** 自己已經投過的對象代碼。用來把已投的人從名單上收起來 */
+  votedTargetIds?: string[];
 }
 
 /**
@@ -217,6 +251,7 @@ export interface SessionPublicMeta {
   status: SessionStatus;
   stageId: string;
   recruitOpen: boolean;
+  hasVote: boolean;
   updatedAt: string;
   /** 這兩個旗標讓前端知道這一階段該顯示什麼，不必自己再查一次階段表 */
   peerPower: "value" | "hidden";
@@ -250,6 +285,10 @@ export interface HostSnapshot {
   poolLeft: number;
   /** 角色代碼 → 劇本原訂陣營。只出現在主持人視角，玩家端拿不到 */
   scriptFactions: Record<string, Faction | "">;
+  /** 每個人還剩幾張票沒投。主持人看得到進度，但看不到投給誰 */
+  voteProgress: VoteProgress[];
+  /** 全場都投完了嗎——沒投完不能進下一階段 */
+  allVotesCast: boolean;
   log: LogEntry[];
   rev: number;
   fetchedAt: string;

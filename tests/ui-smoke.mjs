@@ -31,6 +31,21 @@ const fail = [];
  */
 const EXPECTED_FAILURES = /\/api\/sessions\/(lookup|[^/]+\/rejoin)$/;
 
+/**
+ * 有些步驟是「故意觸發失敗」來驗證擋得住（例如票沒投完不能換階段）。
+ * 那種 4xx 不是錯誤，但也不該把整條端點永久加進白名單——
+ * 真的壞掉時就看不出來了。所以只在那一小段期間開啟這個旗標。
+ */
+let expectingFailure = false;
+async function expectFailure(fn) {
+  expectingFailure = true;
+  try {
+    await fn();
+  } finally {
+    expectingFailure = false;
+  }
+}
+
 async function newPage(ctx, label) {
   const page = await ctx.newPage();
   page.on("console", (m) => {
@@ -41,7 +56,7 @@ async function newPage(ctx, label) {
   });
   page.on("pageerror", (e) => errors.push(`[${label}] pageerror: ${e.message}`));
   page.on("response", (r) => {
-    if (r.status() >= 400 && !EXPECTED_FAILURES.test(r.url())) {
+    if (r.status() >= 400 && !expectingFailure && !EXPECTED_FAILURES.test(r.url())) {
       errors.push(`[${label}] HTTP ${r.status()} ${r.url()}`);
     }
   });
@@ -210,6 +225,53 @@ try {
   const backText = await player.innerText("body");
   check("認回後看得到自己的暱稱", /阿謙/.test(backText), true);
   console.log("  PASS  玩家清掉瀏覽器資料後用暱稱認回角色");
+
+  // ---- 8.7 競選投票：全部投完才能離開第一週 ----
+  await host.click('nav button:has-text("舉報")');
+  await host.waitForSelector("text=競 選 投 票 進 度", { timeout: 20000 });
+  check("主持人看得到投票進度", await host.isVisible("text=還有人沒投"), true);
+
+  // 先確認沒投完真的走不了
+  await host.click('nav button:has-text("階段")');
+  await expectFailure(async () => {
+    await host.click('button:has-text("第二週：暗算九爺")');
+    await host.waitForSelector("text=/沒投完票/", { timeout: 20000 });
+  });
+  check("沒投完擋下換階段", true, true);
+
+  // 玩家用畫面投一票，其餘的用 API 補完（三人場每人 2 張同意、0 張不同意）
+  await player.click('nav button:has-text("行動")');
+  await player.waitForSelector("text=競 選 投 票", { timeout: 20000 });
+  await player.selectOption('select:near(:text("競 選 投 票"))', { index: 1 });
+  player.once("dialog", (d) => d.accept());
+  await player.click('button:has-text("同意（")');
+  await player.waitForSelector("text=/已投給/", { timeout: 20000 });
+  console.log("  PASS  玩家從畫面投出一票");
+
+  const roster = await (await fetch(`${BASE}/api/sessions/${CODE}/state`, {
+    headers: { "x-host-pin": PASSWORD },
+  })).json();
+  const ids = roster.players.map((p) => ({ id: p.id, joinCode: p.joinCode }));
+  for (const voter of ids) {
+    for (const target of ids.filter((t) => t.id !== voter.id)) {
+      await fetch(`${BASE}/api/sessions/${CODE}/votes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-player-id": voter.id,
+          "x-join-code": voter.joinCode,
+        },
+        body: JSON.stringify({ targetId: target.id, kind: "approve" }),
+      });
+    }
+  }
+
+  await host.reload({ waitUntil: "networkidle" });
+  await host.waitForSelector("text=玩 家", { timeout: 20000 });
+  await host.click('nav button:has-text("舉報")');
+  await host.waitForSelector("text=全部投完", { timeout: 20000 });
+  check("全部投完後主持人看得到", true, true);
+  await shot(host, "16-host-vote");
 
   // ---- 9. 會長就任：主持人發放聘書，玩家端要看得到 ----
   await host.click('nav button:has-text("階段")');

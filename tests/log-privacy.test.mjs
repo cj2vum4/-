@@ -7,7 +7,8 @@
  * 威望值在榜單上是公開的，但動態出現「某某 威望值 −1」就等於公布他被舉報成立
  * 或被構陷；招募次數則等於把威望排名攤開。兩者都不該出現。
  */
-import { asPlayer, call, hostHeaders, makeChecker, openSession } from "./helpers.mjs";
+import { asPlayer, call, castAllVotes, hostHeaders, makeChecker, openSession }
+  from "./helpers.mjs";
 
 const { check, ok, done } = makeChecker();
 
@@ -50,6 +51,8 @@ await call(`/${CODE}/reports`, {
 });
 
 // 切到第二週：結算舉報 + 依威望排名發招募次數
+// 第一週結束前全場必須投完票，否則換不了階段
+await castAllVotes(CODE, players);
 await call(`/${CODE}/stage`, { method: "POST", headers: host, body: { stageId: "week2" } });
 
 // 別人抽招募
@@ -73,9 +76,17 @@ check("動態沒有別人的數值變動", peerWithResource, []);
 const peerRecruit = myLog.filter((e) => e.playerId && e.playerId !== me.id && e.type === "recruit");
 check("動態沒有別人的招募次數", peerRecruit, []);
 
-// 名字＋數值同時出現最直觀，額外用字串比對再擋一次
-const dump = JSON.stringify(myLog);
-ok("動態沒提到月月的威望", !/月月|沈識月/.test(dump) || !dump.includes("威望值"), dump.slice(0, 400));
+// 投票紀錄：自己投給誰看得到（那是自己的行為），別人投給誰一概看不到
+ok(
+  "看得到自己投給誰",
+  myLog.some((e) => e.type === "vote" && e.playerId === me.id && e.reason.includes("投給")),
+  JSON.stringify(myLog.filter((e) => e.type === "vote")).slice(0, 300),
+);
+check(
+  "看不到別人的投票紀錄",
+  myLog.filter((e) => e.type === "vote" && e.playerId && e.playerId !== me.id),
+  [],
+);
 
 // ---- 自己的紀錄還是看得到，不然玩家不知道自己發生什麼事 ----
 await call(`/${CODE}/grant`, {

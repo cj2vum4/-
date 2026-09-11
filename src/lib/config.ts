@@ -81,6 +81,8 @@ export interface StageDef {
   hasReport?: boolean;
   /** 此階段是否進行拍賣結算 */
   hasAuction?: boolean;
+  /** 此階段是否開放投票（競選會長助理） */
+  hasVote?: boolean;
   /** 此階段是否顯示拓展會的地點核選 */
   hasLocations?: boolean;
   /** 進入此階段時，調配面板預設要調的數值 */
@@ -158,11 +160,12 @@ export const STAGES: StageDef[] = [
     showPrestige: true,
     // 第一週起招募系統自動開啟，但這一階段還不發抽取次數
     autoRecruit: true,
+    hasVote: true,
     presets: [
       { id: "treasure", label: "開啟九爺金庫的寶箱", power: 800 },
       { id: "key", label: "花紋金鑰匙", power: 500 },
       { id: "jade", label: "廟街隱藏麒麟玉珮", power: 500 },
-      { id: "assistant", label: "當選會長助理", power: 200 },
+      // 「當選會長助理」改由投票結算自動發放，不再放手動快捷免得重複給
     ],
   },
   {
@@ -315,6 +318,21 @@ export const AUCTION_LOTS: AuctionLot[] = [
 export const AUCTION_LOT_MAP: Record<string, AuctionLot> = Object.fromEntries(
   AUCTION_LOTS.map((l) => [l.id, l]),
 );
+
+/**
+ * 第一週「競選會長助理」的投票規則。
+ *
+ * 每人手上同意票 2 張、不同意票 1 張，三張要投給三個「不同」的人，也不能投自己。
+ * 結算時一張票算 1 點威望，同意加、不同意減。
+ */
+export const VOTE_APPROVE_COUNT = 2;
+export const VOTE_OPPOSE_COUNT = 1;
+export const VOTE_TOTAL = VOTE_APPROVE_COUNT + VOTE_OPPOSE_COUNT;
+/** 一張票值多少威望值 */
+export const VOTE_PRESTIGE = 1;
+/** 票選結果第一名獲得的勢力值 */
+export const ASSISTANT_POWER = 200;
+export const ASSISTANT_TITLE = "當選會長助理";
 
 export const EXPO_PICK_COUNT = 3;
 
