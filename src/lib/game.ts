@@ -367,6 +367,11 @@ export async function findByPassword(password: string): Promise<SessionMeta> {
   return hit;
 }
 
+/** 讀場次設定。會走快取，不額外打儲存層。 */
+export async function getSessionMeta(code: string): Promise<SessionMeta> {
+  return (await getEntry(code)).session;
+}
+
 /** 玩家輸入場次時用的檢查，找不到就是「無此場次」 */
 export async function findSession(code: string): Promise<SessionMeta> {
   const session = (await getEntry(code)).session;

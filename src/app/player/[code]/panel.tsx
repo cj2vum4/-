@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Certificate } from "@/components/certificate";
+import { StoryView } from "@/components/story-view";
 import { CharacterPoster } from "@/components/character-poster";
 import { LogFeed } from "@/components/log-feed";
 import { AppShell, SectionTitle, ShellHeader, type TabDef } from "@/components/mobile-shell";
@@ -293,6 +294,7 @@ function LiveBoard({
 }) {
   const { snapshot, error, loading, refresh } = usePlayerState(code, me);
   const [tab, setTab] = useState("me");
+  const [showStory, setShowStory] = useState(false);
 
   const session = snapshot?.session;
   const stage = session ? STAGE_MAP[session.stageId] : undefined;
@@ -370,6 +372,18 @@ function LiveBoard({
   if (!mine) return null;
   const showHp = stage?.id === "gunfight" || mine.hp !== 0;
 
+  // 復盤是全螢幕的，直接蓋掉整個外殼，不跟底部導覽列擠在一起
+  if (showStory) {
+    return (
+      <StoryView
+        code={code}
+        me={me}
+        myCharacterId={mine.characterId}
+        onClose={() => setShowStory(false)}
+      />
+    );
+  }
+
   return (
     <AppShell
       tabs={tabs}
@@ -405,6 +419,13 @@ function LiveBoard({
         <div className="space-y-3">
           {/* 聘書發放後就置頂——這是整場遊戲的最後成果，值得第一眼看到 */}
           {mine.certificate ? <Certificate cert={mine.certificate} /> : null}
+
+          {/* 復盤跟著聘書一起開放，那是遊戲結束的訊號 */}
+          {session?.certsIssued ? (
+            <Button variant="jade" className="w-full" onClick={() => setShowStory(true)}>
+              查看故事復盤
+            </Button>
+          ) : null}
 
           <div
             className={`grid gap-2.5 ${

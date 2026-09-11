@@ -245,6 +245,32 @@ try {
 
   // 聘書是頁面裡最高的元件，要確認它沒把導覽列擠出畫面
   await assertNoPageScroll(player, "玩家（聘書後）", ["我的"]);
+
+  // ---- 10. 故事復盤：聘書發放後才出現 ----
+  await player.click('button:has-text("查看故事復盤")');
+  await player.waitForSelector("text=陣營部分復盤", { timeout: 20000 });
+  const storyText = await player.innerText("body");
+  check("復盤載入完成", /商會的由來/.test(storyText), true);
+  check("有角色身份", /角色身份/.test(storyText), true);
+  check("揭露陸秉白真名", /陸無病/.test(storyText), true);
+  check("標出自己扮演的角色", /你扮演的角色/.test(storyText), true);
+  check("有下一部預告", /下一部作品/.test(storyText), true);
+  await shot(player, "12-player-story");
+
+  // 復盤很長，頁面本身仍然不該捲動——由內層區塊自己捲
+  const storyMetrics = await player.evaluate(() => ({
+    pageScroll: document.documentElement.scrollHeight - window.innerHeight,
+    canScrollInside: (() => {
+      const el = document.querySelector(".app-scroll");
+      return el ? el.scrollHeight > el.clientHeight : false;
+    })(),
+  }));
+  check("復盤頁面本身不捲動", storyMetrics.pageScroll <= 1, true);
+  check("內層可以捲", storyMetrics.canScrollInside, true);
+
+  await player.click('button:has-text("返回")');
+  await player.waitForSelector("text=場 次 資 訊", { timeout: 20000 });
+  console.log("  PASS  故事復盤可開可關");
 } finally {
   await browser.close();
 }

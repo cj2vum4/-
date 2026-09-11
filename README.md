@@ -28,6 +28,7 @@
 | 玩家之間互相轉贈勢力值 | ✅ |
 | 拍賣結算：輸入得標價，自動扣款並入帳標的真實價值 | ✅ |
 | 會長就任聘書：依勢力值排名發放 7 種稱號，署名用玩家暱稱 | ✅ |
+| 故事復盤：聘書發放後玩家可看完整劇情，自己的角色會被標出來 | ✅ |
 | append-only 流水帳，每筆標註來源類型 | ✅ |
 | 併發安全、批次寫入、API 配額重試 | ✅ |
 
@@ -128,6 +129,7 @@
 | 角色姓名、難度、性格、海報 | `src/lib/characters.ts` | 直接 import，本來就公開 |
 | **真實陣營** | `src/lib/script-factions.ts`（只有伺服器端 import） | 拿不到，本來就不該拿到 |
 | **21 張線索卡答案** | `characters.ts` 的 `CLUE_CARDS`，但只有伺服器端引用 | 靠 tree-shaking 排除，**不要在 client component 引用它** |
+| **故事復盤全文** | `src/lib/story.ts`（只有伺服器端 import） | 聘書發放後打 `/api/sessions/[code]/story` 才拿得到 |
 
 主持台要顯示「劇本原訂陣營」時，走 `HostSnapshot.scriptFactions` 由伺服器帶下來，
 不要在前端 import 機密檔案。
@@ -138,8 +140,9 @@
 npm run build:only && npm run check:leaks
 ```
 
-`scripts/check-leaks.mjs` 會掃玩家端的 chunk，找角色→陣營的對應與線索卡編號，
-發現就讓 CI 掛掉。
+`scripts/check-leaks.mjs` 會掃玩家端的 chunk，找角色→陣營的對應、線索卡編號，
+以及只出現在故事復盤裡的專有名詞（陸無病、小鯉、夜鴉…），發現就讓流程掛掉。
+這三種東西只要進了 bundle，玩家開場前就能把結局看完。
 
 ---
 
@@ -486,6 +489,11 @@ export const AUCTION_LOTS = [
 差額就是這一標的賺賠。兩筆分開記帳，玩家看得懂錢的來去。
 出價超過餘額會擋下並報出目前餘額——那多半是打錯字。
 
+**`src/lib/story.ts`** — 故事復盤全文（**只有伺服器端能 import**）
+
+依原書分成四章：商會的由來、角色身份、兩座金庫、事件復盤。
+`characterId` 那欄用來標出「這是你扮演的角色」。
+
 **`src/lib/script-factions.ts`** — 角色的真實陣營（**只有伺服器端能 import**）
 
 ```ts
@@ -554,7 +562,7 @@ GOOGLE_SHEETS_SPREADSHEET_ID= GOOGLE_SERVICE_ACCOUNT_JSON= \
 GOOGLE_APPLICATION_CREDENTIALS= GOOGLE_SERVICE_ACCOUNT_EMAIL= \
 GOOGLE_PRIVATE_KEY= npx next start -p 3100 &
 
-npm run test:api              # 場次與封存、掉線回場、招募、聘書、陣營、動態可見性、拍賣（124 個案例）
+npm run test:api              # 場次、回場、聘書、陣營、動態、拍賣、復盤（146 個案例）
 npm run test:ui               # 全流程 UI（需 npm i -D playwright）
 ```
 
@@ -593,6 +601,10 @@ node --env-file=.env.local --experimental-strip-types scripts/show-archive.mjs 2
 `tests/rejoin.test.mjs` 驗掉線回場：暱稱正確才認得回、資料原封不動、
 空白與英文大小寫不影響比對、打錯不洩漏正確答案、沒人選的角色不走這條路、
 遊戲中途能回場但新玩家仍然不能入場、封存後不能認回。
+
+`tests/story.test.mjs` 驗故事復盤：聘書發放前誰都拿不到（而且擋下時不夾帶任何內容）、
+沒有身分或通行碼不對拿不到、發放後全員可看、七個角色的陣營與劇本一致、
+內容涵蓋各角色的真實身份與結局。
 
 `tests/auction.test.mjs` 驗拍賣：賺錢與賠錢兩種標、花滿樓要現場輸入價值、
 出價超過餘額擋下、扣款與入帳分成兩筆、玩家不能自己結算、旁人看不到別人的拍賣帳。

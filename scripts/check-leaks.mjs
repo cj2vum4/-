@@ -7,9 +7,10 @@
  * 放進去的東西會原封不動打包進瀏覽器可下載的 JS。真實陣營曾經因此外洩過——
  * 玩家打開 devtools 就能看到全場陣營，陣營博弈直接破功。
  *
- * 這裡檢查兩件事：
+ * 這裡檢查三件事：
  *   1. 角色 → 真實陣營的對應（`faction:"九爺"` 這種形式）
  *   2. 21 張線索卡的編號（洩漏就等於公布答案，舉報必中）
+ *   3. 故事復盤的內容（那是結局，開場前就看得到等於整場白玩）
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -24,6 +25,12 @@ const CLUE_CODES = [
   "67B", "C13", "55A", "CC5", "B20", "B11", "7C2", "1B6", "DD1",
   "3BA", "5C1", "7B7",
 ];
+
+/**
+ * 只出現在故事復盤裡的專有名詞。這些字在公開的角色設定中完全不存在，
+ * 所以只要在玩家端 chunk 看到，就代表 story.ts 被 client component import 了。
+ */
+const STORY_ONLY = ["陸無病", "小鯉", "夜鴉", "王福生", "維克托", "德川一郎", "豆娘", "熙則"];
 
 let files;
 try {
@@ -49,6 +56,9 @@ for (const name of files) {
   for (const code of CLUE_CODES) {
     if (text.includes(`"${code}"`)) findings.push(`${name}：線索卡編號 "${code}"`);
   }
+  for (const word of STORY_ONLY) {
+    if (text.includes(word)) findings.push(`${name}：故事復盤的內容「${word}」`);
+  }
 }
 
 if (findings.length > 0) {
@@ -58,4 +68,6 @@ if (findings.length > 0) {
   process.exit(1);
 }
 
-console.log(`✅ 玩家端 bundle 沒有洩漏陣營對應與線索卡答案（檢查了 ${files.length} 個 chunk）`);
+console.log(
+  `✅ 玩家端 bundle 沒有洩漏陣營對應、線索卡答案與故事復盤（檢查了 ${files.length} 個 chunk）`,
+);
