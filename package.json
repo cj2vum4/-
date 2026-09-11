@@ -12,7 +12,7 @@
     "session:remove": "node --env-file=.env.local scripts/remove-session.mjs",
     "build:only": "next build",
     "migrate:sessions": "node --env-file=.env.local scripts/migrate-sessions.mjs",
-    "test:api": "node tests/session.test.mjs && node tests/rejoin.test.mjs && node tests/certificate.test.mjs && node tests/faction.test.mjs && node tests/log-privacy.test.mjs && node tests/vote.test.mjs && node tests/auction.test.mjs && node tests/story.test.mjs",
+    "test:api": "node tests/session.test.mjs && node tests/rejoin.test.mjs && node tests/certificate.test.mjs && node tests/faction.test.mjs && node tests/log-privacy.test.mjs && node tests/vote.test.mjs && node tests/report.test.mjs && node tests/auction.test.mjs && node tests/story.test.mjs",
     "test:ui": "node tests/ui-smoke.mjs",
     "check:leaks": "node scripts/check-leaks.mjs",
     "archive:show": "node --env-file=.env.local --experimental-strip-types scripts/show-archive.mjs"

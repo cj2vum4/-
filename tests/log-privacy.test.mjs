@@ -43,11 +43,12 @@ await call(`/${CODE}/grant`, {
   body: { playerIds: [third.id], resource: "prestige", delta: 3, reason: "投票獎勵" },
 });
 
-// 舉報：小樹舉報月月，用的是周謙的線索卡 → 舉報失敗，扣舉報人威望
+// 舉報：小樹舉報月月，用的是不在 21 張名單中的編號 → 受理，結算時扣舉報人威望
+// （拿真卡指錯人現在是當場退回，不會留下紀錄，所以這裡不能用真卡）
 await call(`/${CODE}/reports`, {
   method: "POST",
   headers: asPlayer(third),
-  body: { targetId: other.id, clueCode: "0A6" },
+  body: { targetId: other.id, clueCode: "ZZ9" },
 });
 
 // 切到第二週：結算舉報 + 依威望排名發招募次數

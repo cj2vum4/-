@@ -39,8 +39,15 @@ const byTitle = new Map(meta.data.sheets.map((s) => [s.properties.title, s.prope
 
 const targets = [];
 for (const code of codes) {
-  // 三個工作分頁，加上封存後的彙整分頁（名稱就是場次代碼本身）
-  for (const title of [`${code}_玩家`, `${code}_紀錄`, `${code}_舉報`, code]) {
+  // 所有工作分頁，加上封存後的彙整分頁（名稱就是場次代碼本身）。
+  // 新增分頁種類時記得補進來——漏掉的話會留下孤兒分頁，之前就發生過兩次。
+  for (const title of [
+    `${code}_玩家`,
+    `${code}_紀錄`,
+    `${code}_舉報`,
+    `${code}_投票`,
+    code,
+  ]) {
     if (byTitle.has(title)) targets.push({ title, sheetId: byTitle.get(title) });
   }
 }

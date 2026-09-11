@@ -923,6 +923,13 @@ function PlayerActions({
     if (!target) return setError("請選擇要舉報的對象");
     if (!clue.trim()) return setError("請填寫線索卡編號");
 
+    // 編號打錯（不在名單中）現在是會扣威望的，送出前多問一次。
+    // 對話框刻意不說這串編號有沒有效——線索卡對應表只存在伺服器端。
+    const name = players.find((p) => p.id === target)?.name ?? "對方";
+    if (!confirm(`以線索卡「${clue.trim()}」舉報 ${name}？\n\n編號若不在線索卡名單中，結算時你的威望會 −1。`)) {
+      return;
+    }
+
     setBusy(true);
     try {
       await api(`/api/sessions/${code}/reports`, {
@@ -1166,8 +1173,12 @@ function PlayerActions({
                 {busy ? "送出中…" : "送出舉報"}
               </Button>
               <p className="text-[11px] leading-relaxed text-muted/70">
-                線索卡若對應到被舉報者，對方威望 −1；對應到其他人，則自己威望 −1。
-                每張線索卡只能用一次；舉報失敗的會在結算後釋放，可再次使用。
+                線索卡對應到被舉報者 → 對方威望 −1；對應到其他人 → 顯示「您輸入錯誤」，
+                不受理也不扣分，可以改對象再送一次。
+                <br />
+                <b className="text-vermilion-soft">編號若不在線索卡名單中，舉報照樣送出，
+                但結算時自己威望 −1</b>——送出前請確認編號沒打錯。
+                每張線索卡只能用一次。
               </p>
             </div>
           </Panel>

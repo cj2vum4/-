@@ -1423,10 +1423,6 @@ export async function submitReport(
   const clueCode = normalizeClueCode(clueCodeRaw);
   if (!clueCode) throw new GameError("BAD_REQUEST", "請填寫線索卡編號");
 
-  // 編號不在 21 張之中：不留紀錄、不扣分，只回報輸入有誤
-  const ownerCharacterId = clueOwner(clueCode);
-  if (!ownerCharacterId) throw new GameError("BAD_CLUE", "您輸入錯誤");
-
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
     const stage = STAGE_MAP[entry.session.stageId];
@@ -1439,13 +1435,33 @@ export async function submitReport(
     if (!reporter) throw new GameError("PLAYER_NOT_FOUND", "找不到你的角色，請重新入場");
     if (!target) throw new GameError("PLAYER_NOT_FOUND", "找不到被舉報的對象");
     if (reporterId === targetId) throw new GameError("BAD_REQUEST", "不能舉報自己");
-    if (!clueAvailable(entry, clueCode)) {
-      throw new GameError("BAD_CLUE", "此線索卡已被使用");
+
+    /*
+     * 判定規則（注意「指向別人」與「不在名單中」是兩種不同的待遇）：
+     *
+     *   21 張之一，且指向被舉報人 → 舉報成立，結算時扣被舉報人 1 威望
+     *   21 張之一，但指向別人     → 「您輸入錯誤」，不受理也不留紀錄
+     *   不在 21 張之中            → 受理，結算時扣舉報人 1 威望
+     *
+     * 也就是說拿著真卡指錯人只算填錯，可以重來；隨便編一個編號才要付代價。
+     */
+    const ownerCharacterId = clueOwner(clueCode);
+    let verdict: ReportVerdict;
+
+    if (ownerCharacterId) {
+      if (ownerCharacterId !== target.characterId) {
+        throw new GameError("BAD_CLUE", "您輸入錯誤");
+      }
+      // 單次使用只對真的線索卡有意義。編造的編號不做這個檢查——
+      // 否則第二個人輸入同一串會被告知「已被使用」，等於洩漏有人送過。
+      if (!clueAvailable(entry, clueCode)) {
+        throw new GameError("BAD_CLUE", "此線索卡已被使用");
+      }
+      verdict = "success";
+    } else {
+      verdict = "fail";
     }
 
-    // 線索卡指向的角色就是被舉報人 → 成立；指向別人 → 舉報錯誤
-    const verdict: ReportVerdict =
-      ownerCharacterId === target.characterId ? "success" : "fail";
     const now = new Date().toISOString();
 
     const report: Report = {
