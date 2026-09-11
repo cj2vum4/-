@@ -36,7 +36,8 @@ export function StoryView({
   onClose,
 }: {
   code: string;
-  me: PlayerIdentity;
+  /** 進行中的場次要帶身分；已封存的場次不驗身分，可以是 null */
+  me: PlayerIdentity | null;
   /** 用來標出「這是你扮演的角色」 */
   myCharacterId?: string;
   onClose: () => void;
@@ -46,7 +47,7 @@ export function StoryView({
 
   useEffect(() => {
     let alive = true;
-    api<StoryData>(`/api/sessions/${code}/story`, { player: me })
+    api<StoryData>(`/api/sessions/${code}/story`, { player: me ?? undefined })
       .then((d) => alive && setStory(d))
       .catch((err) => {
         if (!alive) return;

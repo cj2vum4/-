@@ -1720,18 +1720,41 @@ function field(row: (string | number)[], index: Record<string, number>, name: st
   return i === undefined ? "" : cell(row, i);
 }
 
+/** 封存場次的角色名單，讓回來的人自己挑 */
+export interface ReviewRosterEntry {
+  id: string;
+  name: string;
+  nickname: string;
+  certRank: number;
+}
+
+export async function getReviewRoster(code: string): Promise<ReviewRosterEntry[]> {
+  const rows = await getDriver().readArchive(code);
+  if (!rows || rows.length === 0) {
+    throw new GameError("SESSION_NOT_FOUND", "找不到這個場次的紀錄");
+  }
+  const players = section(rows, "【玩家】");
+  return players.rows.map((r) => ({
+    id: field(r, players.index, "玩家代碼"),
+    name: field(r, players.index, "角色"),
+    nickname: field(r, players.index, "暱稱"),
+    certRank: Number(field(r, players.index, "聘書名次")) || 0,
+    // 真實陣營刻意不給——故事復盤才是揭露的地方
+  }));
+}
+
 /**
- * 讀封存分頁，回傳這位玩家的回顧。
+ * 讀封存分頁，回傳某個角色的回顧。
  *
- * 認人方式依封存當時的欄位而定：
- *   有「通行碼」欄 → 玩家代碼 + 通行碼，跟進行中的場次同一套
- *   沒有（早期的封存）→ 只比對玩家代碼。玩家代碼存在各自的瀏覽器裡、
- *     介面上從不顯示，強度雖然低一點，但總比讓那一場的人完全看不到自己的紀錄好。
+ * **刻意不做身分驗證。** 場次結束後這裡什麼都不能操作，只剩自己的聘書與紀錄可看；
+ * 依需求改成直接選角色就看得到，玩家換手機、清掉瀏覽器資料也找得回來。
+ *
+ * 代價是同場的人可以互相看到對方的紀錄（包含投票投給誰）。散場之後這通常正是
+ * 大家在桌上聊的內容，而且故事復盤本來就把全部真相攤開了。
  */
 export async function getReviewSnapshot(
   code: string,
   playerId: string,
-  joinCode: string,
 ): Promise<ReviewSnapshot> {
   const rows = await getDriver().readArchive(code);
   if (!rows || rows.length === 0) {
@@ -1743,18 +1766,11 @@ export async function getReviewSnapshot(
   );
 
   const players = section(rows, "【玩家】");
-  const hasJoinCode = players.index["通行碼"] !== undefined;
   const wanted = playerId.trim();
-
-  const mine = players.rows.find((r) => {
-    if (field(r, players.index, "玩家代碼").trim() !== wanted) return false;
-    if (!hasJoinCode) return true;
-    return field(r, players.index, "通行碼").trim() === joinCode.trim();
-  });
-  if (!mine) {
-    // 不區分「查無此人」與「通行碼不對」，免得變成猜通行碼的工具
-    throw new GameError("UNAUTHORIZED", "找不到你在這個場次的紀錄");
-  }
+  const mine = players.rows.find(
+    (r) => field(r, players.index, "玩家代碼").trim() === wanted,
+  );
+  if (!mine) throw new GameError("PLAYER_NOT_FOUND", "找不到這個角色的紀錄");
 
   const get = (name: string) => field(mine, players.index, name);
   const certRank = Number(get("聘書名次")) || 0;

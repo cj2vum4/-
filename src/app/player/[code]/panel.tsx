@@ -80,24 +80,8 @@ export function PlayerPanel({ code }: { code: string }) {
     );
   }
 
-  if (ended) {
-    if (me === null) {
-      return (
-        <PageShell>
-          <BackLink href="/player" label="重新輸入場次" />
-          <div className="py-16 text-center">
-            <p className="text-lg font-bold text-paper">這個場次已經結束了</p>
-            <p className="mt-2 text-sm leading-relaxed text-muted">
-              結束後就不能再入場。如果你玩過這一場，
-              <br />
-              用當初那支手機、那個瀏覽器打開就看得到自己的紀錄。
-            </p>
-          </div>
-        </PageShell>
-      );
-    }
-    return <SessionReview code={code} me={me} onReset={() => setMe(null)} />;
-  }
+  // 已結束的場次一律進回顧。沒有存身分也沒關係——那邊會列出角色讓他自己挑。
+  if (ended) return <SessionReview code={code} me={me} />;
 
   if (me === null) return <CharacterPicker code={code} onJoined={setMe} />;
   return (

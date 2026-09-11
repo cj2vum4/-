@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Certificate } from "@/components/certificate";
 import { StoryView } from "@/components/story-view";
 import { CHARACTER_MAP } from "@/lib/characters";
-import { ApiError, api, clearPlayerIdentity, type PlayerIdentity } from "@/lib/client";
+import { ApiError, api, type PlayerIdentity } from "@/lib/client";
 import { formatTime } from "@/lib/date";
 import { Button, CodeStamp, Notice, Panel, PanelTitle } from "@/components/ui";
 import type { Certificate as CertificateData } from "@/lib/types";
@@ -38,31 +38,56 @@ interface ReviewData {
   certsIssued: boolean;
 }
 
+interface RosterEntry {
+  id: string;
+  name: string;
+  nickname: string;
+  certRank: number;
+}
+
 export function SessionReview({
   code,
   me,
-  onReset,
 }: {
   code: string;
-  me: PlayerIdentity;
-  onReset: () => void;
+  /** 瀏覽器裡還留著身分的話就直接開那個角色，沒有就讓他自己挑 */
+  me: PlayerIdentity | null;
 }) {
+  const [roster, setRoster] = useState<RosterEntry[] | null>(null);
+  const [picked, setPicked] = useState<string | null>(me?.id ?? null);
   const [data, setData] = useState<ReviewData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showStory, setShowStory] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    api<ReviewData>(`/api/sessions/${code}/review`, { player: me })
+    api<{ roster: RosterEntry[] }>(`/api/sessions/${code}/review`)
+      .then((d) => alive && setRoster(d.roster))
+      .catch((err) => {
+        if (!alive) return;
+        setError(err instanceof ApiError ? err.message : "讀取場次紀錄失敗");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [code]);
+
+  useEffect(() => {
+    if (!picked) return;
+    let alive = true;
+    setData(null);
+    api<ReviewData>(`/api/sessions/${code}/review?player=${encodeURIComponent(picked)}`)
       .then((d) => alive && setData(d))
       .catch((err) => {
         if (!alive) return;
+        // 瀏覽器裡存的身分可能是別場的，挑不到就退回名單讓他自己選
+        setPicked(null);
         setError(err instanceof ApiError ? err.message : "讀取紀錄失敗");
       });
     return () => {
       alive = false;
     };
-  }, [code, me]);
+  }, [code, picked]);
 
   const character = data ? CHARACTER_MAP[
     Object.keys(CHARACTER_MAP).find((id) => CHARACTER_MAP[id].name === data.me.name) ?? ""
@@ -88,27 +113,71 @@ export function SessionReview({
               {data?.me.name ?? "場次回顧"}
             </h1>
             <p className="truncate text-[11px] text-muted/70">
-              {data ? `${data.session.title}・已結束` : "讀取中…"}
+              {data ? `${data.session.title}・已結束` : "已結束的場次"}
             </p>
           </div>
-          <span className="shrink-0 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] text-muted">
-            回顧
-          </span>
+          {picked ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPicked(null);
+                setData(null);
+                setError(null);
+              }}
+              className="shrink-0 rounded-full border border-line bg-panel-2 px-2.5 py-1 text-[11px] text-muted hover:text-gold"
+            >
+              換角色
+            </button>
+          ) : (
+            <span className="shrink-0 rounded-full border border-line bg-panel-2 px-2 py-0.5 text-[11px] text-muted">
+              回顧
+            </span>
+          )}
         </div>
       </header>
 
       <div className="app-scroll space-y-3 px-4 py-4">
-        {error ? (
-          <>
-            <Notice>{error}</Notice>
-            <p className="text-[11px] leading-relaxed text-muted/70">
-              如果你換過手機或清掉瀏覽器資料，這個場次已經結束，沒辦法再用暱稱認回了。
-              完整紀錄請找主持人查試算表。
-            </p>
-          </>
+        {error ? <Notice>{error}</Notice> : null}
+
+        {!picked ? (
+          roster === null ? (
+            <p className="py-10 text-center text-sm text-muted">讀取名單中…</p>
+          ) : (
+            <>
+              <p className="mb-1 text-sm leading-relaxed text-muted">
+                這個場次已經結束。選擇你當時扮演的角色，就能看到自己的聘書與紀錄。
+              </p>
+              <ul className="space-y-2">
+                {roster.map((r) => (
+                  <li key={r.id}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError(null);
+                        setPicked(r.id);
+                      }}
+                      className="w-full rounded-xl border border-line bg-panel-2/60 px-3.5 py-3 text-left transition-colors hover:border-gold/60"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="text-base font-bold text-paper">{r.name}</span>
+                        {r.nickname ? (
+                          <span className="text-xs text-muted">{r.nickname}</span>
+                        ) : null}
+                        {r.certRank ? (
+                          <span className="ml-auto shrink-0 text-[11px] text-gold-soft">
+                            第 {r.certRank} 名
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )
         ) : null}
 
-        {!data && !error ? (
+        {picked && !data && !error ? (
           <p className="py-10 text-center text-sm text-muted">讀取紀錄中…</p>
         ) : null}
 
@@ -170,17 +239,11 @@ export function SessionReview({
           </>
         ) : null}
 
-        <button
-          type="button"
-          onClick={() => {
-            if (!confirm("要清掉這個場次在本機的身分嗎？清掉後就看不到這份紀錄了。")) return;
-            clearPlayerIdentity(code);
-            onReset();
-          }}
-          className="w-full py-1 text-center text-xs text-muted/60 underline underline-offset-4"
-        >
-          清除本機身分
-        </button>
+        {data ? (
+          <p className="py-1 text-center text-[11px] leading-relaxed text-muted/50">
+            場次已結束，這裡的內容不會再變動。
+          </p>
+        ) : null}
       </div>
     </div>
   );

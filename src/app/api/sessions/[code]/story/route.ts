@@ -1,6 +1,6 @@
 import { handle, jsonOk, playerAuth, requireCode } from "@/lib/api-helpers";
 import { GameError } from "@/lib/errors";
-import { assertPlayer, getReviewSnapshot, getSessionMeta } from "@/lib/game";
+import { assertPlayer, getReviewRoster, getSessionMeta } from "@/lib/game";
 import { STORY, STORY_EPILOGUE, STORY_SUBTITLE, STORY_TITLE } from "@/lib/story";
 
 export const dynamic = "force-dynamic";
@@ -22,9 +22,10 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
 
     const session = await getSessionMeta(code);
     if (session.archived) {
-      // 封存後工作分頁沒了，改用彙整分頁認人。散場後還想重看結局是很自然的事。
-      const review = await getReviewSnapshot(code, playerId, joinCode);
-      if (!review.certsIssued) {
+      // 封存後不驗身分，跟回顧一致——這時候已經什麼都不能操作了。
+      // 只確認這場真的發過聘書，沒發過就代表遊戲沒走到結局。
+      const roster = await getReviewRoster(code);
+      if (!roster.some((p) => p.certRank > 0)) {
         throw new GameError("BAD_REQUEST", "這個場次沒有發放聘書，沒有故事復盤");
       }
     } else {

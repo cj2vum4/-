@@ -62,8 +62,23 @@ check("已封存", closed.json.session.archived, true);
 const liveAfter = await call(`/${CODE}/state`, { headers: asPlayer(me) });
 ok("封存後拿不到即時狀態", liveAfter.status >= 400, `HTTP ${liveAfter.status}`);
 
+// ---- 名單：回來的人自己挑角色，不需要驗身分 ----
+const roster = await call(`/${CODE}/review`);
+ok("不帶身分也拿得到名單", roster.status === 200, JSON.stringify(roster.json).slice(0, 200));
+check("名單有三個人", roster.json.roster.length, 3);
+check(
+  "名單有角色與暱稱",
+  roster.json.roster.map((r) => `${r.name}:${r.nickname}`).sort(),
+  ["周謙:阿謙", "沈識月:月月", "陳嘉樹:小樹"].sort(),
+);
+ok(
+  "名單不含真實陣營",
+  !JSON.stringify(roster.json.roster).match(/九爺|紅姑娘|鬼老/),
+  JSON.stringify(roster.json.roster),
+);
+
 // ---- 回顧讀得到 ----
-const review = await call(`/${CODE}/review`, { headers: asPlayer(me) });
+const review = await call(`/${CODE}/review?player=${me.id}`);
 ok("回顧讀得到", review.status === 200, JSON.stringify(review.json).slice(0, 200));
 check("角色對得上", review.json.me.name, "周謙");
 check("暱稱還在", review.json.me.nickname, "阿謙");
@@ -100,7 +115,7 @@ ok(
 );
 
 // ---- 別人看到的是自己那一份 ----
-const otherReview = await call(`/${CODE}/review`, { headers: asPlayer(other) });
+const otherReview = await call(`/${CODE}/review?player=${other.id}`);
 check("另一位玩家看到自己的", otherReview.json.me.name, "沈識月");
 ok(
   "而且看得到只有他才有的那一筆",
@@ -113,21 +128,13 @@ ok(
   `${otherReview.json.me.power} vs ${review.json.me.power}`,
 );
 
-// ---- 認證 ----
-const badCode = await call(`/${CODE}/review`, {
-  headers: { "x-player-id": me.id, "x-join-code": "0000" },
-});
-ok("通行碼不對拿不到", badCode.status >= 400, `HTTP ${badCode.status}`);
-const anon = await call(`/${CODE}/review`);
-ok("沒有身分拿不到", anon.status >= 400, `HTTP ${anon.status}`);
+// ---- 不存在的角色代碼還是要擋 ----
+const nobody = await call(`/${CODE}/review?player=PNOPE00`);
+ok("不存在的角色代碼拿不到", nobody.status >= 400, `HTTP ${nobody.status}`);
 
-// ---- 故事復盤在封存後仍然看得到 ----
-const story = await call(`/${CODE}/story`, { headers: asPlayer(me) });
-ok("封存後仍看得到故事復盤", story.status === 200, JSON.stringify(story.json).slice(0, 200));
-const storyAnon = await call(`/${CODE}/story`, {
-  headers: { "x-player-id": me.id, "x-join-code": "0000" },
-});
-ok("通行碼不對看不到復盤", storyAnon.status >= 400, `HTTP ${storyAnon.status}`);
+// ---- 故事復盤在封存後仍然看得到，一樣不驗身分 ----
+const story = await call(`/${CODE}/story`);
+ok("封存後不帶身分也看得到復盤", story.status === 200, JSON.stringify(story.json).slice(0, 200));
 
 // ---- 密碼還找得到這一場（散場後回來用的） ----
 const look = await call("/lookup", { method: "POST", body: { password: PW } });
@@ -142,7 +149,7 @@ check("密碼指向新的場次", lookAgain.json.session.code, fresh.json.sessio
 check("新場次不是封存的", lookAgain.json.session.archived, false);
 
 // 舊場次的回顧照樣讀得到
-const stillThere = await call(`/${CODE}/review`, { headers: asPlayer(me) });
+const stillThere = await call(`/${CODE}/review?player=${me.id}`);
 ok("舊場次的回顧仍然讀得到", stillThere.status === 200, `HTTP ${stillThere.status}`);
 
 // ---- 舊格式的封存（沒有「通行碼」欄）也要讀得回來 ----
@@ -162,17 +169,12 @@ ok("舊場次的回顧仍然讀得到", stillThere.status === 200, `HTTP ${still
   });
   await call(`/${code}/status`, { method: "POST", headers: h, body: { status: "closed" } });
 
-  // 正常讀得到
-  const normal = await call(`/${code}/review`, { headers: asPlayer(ps[0]) });
-  ok("新格式讀得到", normal.status === 200, JSON.stringify(normal.json).slice(0, 200));
-  check("新格式的勢力值", normal.json.me.power, 321);
-  ok(
-    "新格式帶通行碼時，通行碼錯就讀不到",
-    (await call(`/${code}/review`, {
-      headers: { "x-player-id": ps[0].id, "x-join-code": "0000" },
-    })).status >= 400,
-    "應該被擋",
-  );
+  const normal = await call(`/${code}/review?player=${ps[0].id}`);
+  ok("讀得到", normal.status === 200, JSON.stringify(normal.json).slice(0, 200));
+  check("勢力值對得上", normal.json.me.power, 321);
+  // 沒發聘書的場次不該有故事復盤
+  const noStory = await call(`/${code}/story`);
+  ok("沒發聘書就沒有復盤", noStory.status >= 400, JSON.stringify(noStory.json));
 }
 
 done("場次回顧測試");

@@ -342,8 +342,19 @@ try {
     await host.click('button:has-text("結束")');
     await host.waitForTimeout(2500);
     await player.reload({ waitUntil: "networkidle" });
-    await player.waitForSelector("text=回顧", { timeout: 20000 });
+    await player.waitForSelector("text=我 的 紀 錄", { timeout: 20000 });
   });
+
+  // 換個瀏覽器（清掉身分）回來，應該要列出角色讓人自己挑
+  await player.evaluate(() => localStorage.clear());
+  await player.reload({ waitUntil: "networkidle" });
+  await player.waitForSelector("text=/選擇你當時扮演的角色/", { timeout: 20000 });
+  check("清掉身分後列出角色名單", await player.isVisible('button:has-text("周謙")'), true);
+  await shot(player, "18-review-picker");
+  await player.click('button:has-text("周謙")');
+  await player.waitForSelector("text=我 的 紀 錄", { timeout: 20000 });
+  check("挑了角色就看得到紀錄", /阿謙/.test(await player.innerText("body")), true);
+  console.log("  PASS  換裝置也能用角色挑回自己的紀錄");
   const reviewText = await player.innerText("body");
   check("結束後顯示回顧畫面", /我 的 紀 錄/.test(reviewText), true);
   check("回顧看得到最終勢力值", /最終勢力值/.test(reviewText), true);
