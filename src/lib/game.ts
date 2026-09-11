@@ -1046,6 +1046,72 @@ export async function setNickname(
   });
 }
 
+/**
+ * 用暱稱認回自己的角色。
+ *
+ * 玩家換手機、清了瀏覽器資料、或分頁被系統回收之後，瀏覽器裡的身分就沒了，
+ * 而角色已經被自己選走——沒有這個入口他整場就回不去了。
+ *
+ * 認證強度確實不高（同桌的人可能知道彼此的暱稱），但這是實體現場的派對遊戲，
+ * 主持人就在旁邊，找回自己的角色比防範同桌冒名重要。
+ * 錯誤訊息刻意不透露正確暱稱，也不說「這個角色的暱稱是空的」以外的細節。
+ */
+export async function rejoinSession(
+  code: string,
+  characterId: string,
+  nickname: string,
+): Promise<Player> {
+  const nick = normalizeNickname(nickname);
+  if (!nick) throw new GameError("BAD_REQUEST", "請輸入你入場時填的暱稱");
+
+  return withLock(code, async () => {
+    const entry = await getEntryLocked(code);
+    if (entry.session.archived) {
+      throw new GameError("SESSION_NOT_FOUND", "本場次已封存");
+    }
+    if (entry.session.status === "closed") {
+      throw new GameError("SESSION_CLOSED", "本場次已結束");
+    }
+
+    // 刻意不看 stage.allowJoin：掉線最需要回來的時機就是遊戲進行到一半，
+    // 這裡擋的是「新玩家入場」，不是「原本的人回來」。
+    const player = entry.players.find(
+      (p) => p.status === "active" && p.characterId === characterId,
+    );
+    if (!player) {
+      throw new GameError("PLAYER_NOT_FOUND", "這個角色還沒有人選，直接選它入場即可");
+    }
+    if (!player.nickname.trim()) {
+      throw new GameError(
+        "BAD_REQUEST",
+        "這個角色沒有填過暱稱，沒辦法用暱稱認回，請找主持人協助",
+      );
+    }
+    if (normalizeNickname(player.nickname) !== nick) {
+      throw new GameError("UNAUTHORIZED", "暱稱不正確");
+    }
+
+    const log = makeLog({
+      type: "note",
+      playerId: player.id,
+      playerName: player.name,
+      reason: "以暱稱重新進入",
+      operator: "系統",
+      // 掉線重連是私事，不必昭告全場
+      publicVisible: false,
+    });
+    await getDriver().appendLogs(code, [log]);
+    pushLog(entry, log);
+
+    return player;
+  });
+}
+
+/** 暱稱比對用：去空白、統一大小寫，免得玩家自己打的大小寫對不上 */
+function normalizeNickname(raw: string): string {
+  return (raw ?? "").trim().replace(/\s+/g, "").toLocaleLowerCase();
+}
+
 export async function removePlayer(code: string, playerId: string): Promise<void> {
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);

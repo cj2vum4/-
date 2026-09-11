@@ -824,6 +824,14 @@ function Console({
                         <span className="truncate text-[11px] text-muted/60">
                           {character?.occupation}
                         </span>
+                        {/* 玩家掉線要用暱稱認回自己的角色，忘記時主持人得說得出來 */}
+                        {p.nickname ? (
+                          <span className="shrink-0 rounded border border-line px-1 text-[10px] text-paper/70">
+                            暱稱 {p.nickname}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 text-[10px] text-vermilion-soft">未填暱稱</span>
+                        )}
                         <button
                           type="button"
                           onClick={() => kick(p.id, p.name)}

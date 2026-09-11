@@ -24,7 +24,12 @@ const errors = [];
 const fail = [];
 
 /** 刻意查詢不存在的場次會回 404，那是正確行為，不算錯誤 */
-const EXPECTED_404 = /\/api\/sessions\/lookup$/;
+/**
+ * 這幾支端點在測試裡會「故意」失敗，那是被驗證的行為本身，不算錯誤：
+ *   lookup  → 故意查一組不存在的密碼，要回「無此場次」
+ *   rejoin  → 故意打錯暱稱，要被擋下來
+ */
+const EXPECTED_FAILURES = /\/api\/sessions\/(lookup|[^/]+\/rejoin)$/;
 
 async function newPage(ctx, label) {
   const page = await ctx.newPage();
@@ -36,7 +41,7 @@ async function newPage(ctx, label) {
   });
   page.on("pageerror", (e) => errors.push(`[${label}] pageerror: ${e.message}`));
   page.on("response", (r) => {
-    if (r.status() >= 400 && !EXPECTED_404.test(r.url())) {
+    if (r.status() >= 400 && !EXPECTED_FAILURES.test(r.url())) {
       errors.push(`[${label}] HTTP ${r.status()} ${r.url()}`);
     }
   });
@@ -179,6 +184,32 @@ try {
   await assertNoPageScroll(host, "主持", ["調配", "階段", "舉報", "設定", "紀錄"]);
   await shot(player, "8-player-tabs");
   await shot(host, "9-host-tabs");
+
+  // ---- 8.5 掉線回場：清掉瀏覽器身分，用暱稱把角色認回來 ----
+  await player.evaluate(() => localStorage.clear());
+  await player.reload({ waitUntil: "networkidle" });
+  await player.waitForSelector('button:has-text("周謙")', { timeout: 20000 });
+  check("清掉身分後回到選角畫面", await player.isVisible('button:has-text("周謙")'), true);
+
+  // 先點已經被選走的角色，畫面才會切成「認回」模式
+  await player.click('button:has-text("周謙")');
+  await player.waitForSelector('label:has-text("你入場時填的暱稱")', { timeout: 20000 });
+
+  // 用錯的暱稱：要被擋下來，而且不能洩漏正確答案
+  await player.fill('label:has-text("你入場時填的暱稱") input', "打錯了");
+  await player.click('button:has-text("以暱稱認回")');
+  await player.waitForSelector("text=暱稱不正確", { timeout: 20000 });
+  const wrongText = await player.innerText("body");
+  check("錯誤訊息不洩漏正確暱稱", /阿謙/.test(wrongText.replace(/周謙/g, "")), false);
+
+  // 換成正確的暱稱
+  await player.fill('label:has-text("你入場時填的暱稱") input', "阿謙");
+  await player.click('button:has-text("以暱稱認回")');
+  await player.waitForSelector("text=場 次 資 訊", { timeout: 20000 });
+  await shot(player, "11-player-rejoined");
+  const backText = await player.innerText("body");
+  check("認回後看得到自己的暱稱", /阿謙/.test(backText), true);
+  console.log("  PASS  玩家清掉瀏覽器資料後用暱稱認回角色");
 
   // ---- 9. 會長就任：主持人發放聘書，玩家端要看得到 ----
   await host.click('nav button:has-text("階段")');

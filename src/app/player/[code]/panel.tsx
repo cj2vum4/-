@@ -106,24 +106,30 @@ function CharacterPicker({
     };
   }, [code]);
 
+  const pickedChar = characters?.find((c) => c.id === picked) ?? null;
+  /** 選到已經有人的角色＝掉線回來認自己的角色，用暱稱比對 */
+  const rejoining = Boolean(pickedChar?.taken);
+
   async function join() {
     if (!picked) return;
     if (!nickname.trim()) {
-      setError("請先輸入你的暱稱");
+      setError(rejoining ? "請輸入你入場時填的暱稱" : "請先輸入你的暱稱");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const data = await api<{ player: PlayerIdentity }>(`/api/sessions/${code}/join`, {
+      const path = rejoining ? "rejoin" : "join";
+      const data = await api<{ player: PlayerIdentity }>(`/api/sessions/${code}/${path}`, {
         method: "POST",
         body: JSON.stringify({ characterId: picked, nickname: nickname.trim() }),
       });
       savePlayerIdentity(code, data.player);
       onJoined(data.player);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "入場失敗");
-      setPicked(null);
+      setError(err instanceof ApiError ? err.message : rejoining ? "認回失敗" : "入場失敗");
+      // 認回失敗多半是暱稱打錯，角色留著讓他再試一次；新入場才需要重選
+      if (!rejoining) setPicked(null);
     } finally {
       setBusy(false);
     }
@@ -159,12 +165,12 @@ function CharacterPicker({
         <div className="mb-3 rounded-xl border border-gold/40 bg-gold/8 p-3">
           <label className="block">
             <span className="mb-1.5 block text-xs tracking-widest text-gold/85">
-              你的暱稱（會印在最後的聘書上）
+              {rejoining ? "你入場時填的暱稱" : "你的暱稱（會印在最後的聘書上）"}
             </span>
             <input
               value={nickname}
               onChange={(e) => setNickname(e.target.value)}
-              placeholder="例：海星"
+              placeholder={rejoining ? "要跟當初填的一樣" : "例：海星"}
               maxLength={20}
               className="w-full rounded-lg border border-line bg-lacquer px-3 py-2.5 text-base text-paper outline-none placeholder:text-muted/45 focus:border-gold/70"
             />
@@ -181,13 +187,16 @@ function CharacterPicker({
                 <li key={c.id}>
                   <button
                     type="button"
-                    disabled={c.taken || busy}
-                    onClick={() => setPicked(c.id)}
+                    disabled={busy}
+                    onClick={() => {
+                      setPicked(c.id);
+                      setError(null);
+                    }}
                     className={`w-full rounded-xl border px-3.5 py-3 text-left transition-colors ${
-                      c.taken
-                        ? "cursor-not-allowed border-line/50 bg-panel-2/30 opacity-40"
-                        : on
-                          ? "border-gold bg-gold/12"
+                      on
+                        ? "border-gold bg-gold/12"
+                        : c.taken
+                          ? "border-line/50 bg-panel-2/30 opacity-50"
                           : "border-line bg-panel-2/60"
                     }`}
                   >
@@ -216,10 +225,10 @@ function CharacterPicker({
                         </span>
                       ) : null}
                       <span className="ml-auto shrink-0 text-xs">
-                        {c.taken ? (
-                          <span className="text-muted/60">已選走</span>
-                        ) : on ? (
+                        {on ? (
                           <span className="text-gold">✓</span>
+                        ) : c.taken ? (
+                          <span className="text-muted/60">已選走・點我認回</span>
                         ) : null}
                       </span>
                     </div>
@@ -245,13 +254,25 @@ function CharacterPicker({
       </div>
 
       <div className="safe-bottom shrink-0 border-t border-line bg-lacquer/95 px-4 py-3">
+        {rejoining ? (
+          <p className="mb-2 text-[11px] leading-relaxed text-muted/75">
+            「{pickedChar?.name}」已經有人了。如果那是你——換手機、清了瀏覽器、
+            或分頁被關掉——輸入你入場時填的暱稱就能回到遊戲，數值都還在。
+          </p>
+        ) : null}
         <Button onClick={join} disabled={!picked || !nickname.trim() || busy} className="w-full">
           {busy
-            ? "入場中…"
+            ? rejoining
+              ? "認回中…"
+              : "入場中…"
             : !nickname.trim()
-              ? "請先輸入暱稱"
-              : picked
-                ? `以「${characters?.find((c) => c.id === picked)?.name}」入府`
+              ? rejoining
+                ? "請輸入你當初填的暱稱"
+                : "請先輸入暱稱"
+              : pickedChar
+                ? rejoining
+                  ? `以暱稱認回「${pickedChar.name}」`
+                  : `以「${pickedChar.name}」入府`
                 : "請選擇角色"}
         </Button>
       </div>
