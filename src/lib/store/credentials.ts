@@ -24,6 +24,17 @@ export interface CredentialDiagnosis {
   /** 安全的外觀描述，只有長度與開頭字元，不含金鑰內容 */
   shape?: string;
   clientEmail?: string;
+  /**
+   * 金鑰 ID 的前 8 碼。這不是機密——它在 Google Cloud Console 的金鑰清單上
+   * 就看得到——但足以確認「現在跑的是哪一把」，換金鑰後可以用它驗證是否生效。
+   */
+  keyId?: string;
+}
+
+/** 金鑰 ID 只取前 8 碼，足以辨識是哪一把，又不必把整串放進回應 */
+function keyIdPrefix(creds: ServiceAccountCredentials): string | undefined {
+  const id = creds.private_key_id;
+  return typeof id === "string" && id ? id.slice(0, 8) : undefined;
 }
 
 function stripBom(value: string): string {
@@ -165,6 +176,7 @@ export function diagnoseCredentials(): CredentialDiagnosis {
         source: "GOOGLE_SERVICE_ACCOUNT_JSON",
         ok: true,
         clientEmail: creds.client_email,
+        keyId: keyIdPrefix(creds),
       };
     } catch (err) {
       return {

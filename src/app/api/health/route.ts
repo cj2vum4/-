@@ -49,6 +49,8 @@ export async function GET() {
           ok: cred.ok,
           // client_email 不是機密，它本來就要分享給試算表，顯示出來方便核對
           clientEmail: cred.clientEmail ?? null,
+          // 金鑰 ID 前 8 碼。換金鑰後用它確認線上跑的是新的那一把
+          keyId: cred.keyId ?? null,
           // 解析失敗時描述值的外觀（長度、開頭字元），不含任何金鑰內容
           shape: cred.shape ?? null,
         },

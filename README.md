@@ -199,6 +199,56 @@ cp .env.example .env.local
 填入 `GOOGLE_SHEETS_SPREADSHEET_ID`，並用三種方式之一提供憑證（詳見 `.env.example`）。
 最省事的是把整包 JSON 貼進 `GOOGLE_SERVICE_ACCOUNT_JSON`。
 
+### 換一把服務帳號金鑰（金鑰外洩時）
+
+金鑰不小心被印出來、貼錯地方、或離職交接時，就換一把。
+**順序很重要：先建新的、確認能用，最後才刪舊的**——反過來做網站會立刻掛掉。
+
+1. **建新金鑰**
+   Google Cloud Console → IAM 與管理 → 服務帳戶 → 點 `id-grandpa@prandpa.iam.gserviceaccount.com`
+   → 「金鑰」分頁 → 新增金鑰 → 建立新的金鑰 → 選 **JSON** → 建立。
+   瀏覽器會下載一個 `prandpa-xxxxxxxx.json`。此時新舊兩把都有效。
+
+2. **裝進本機**（不用自己處理 base64）
+
+   ```bash
+   node scripts/set-credentials.mjs ~/Downloads/prandpa-xxxxxxxx.json
+   npm run check:sheets     # 確認新金鑰連得上
+   ```
+
+   它會更新 `.env.local`，並把同一串 base64 另存成 `credential.b64.txt` 給你貼到 Render。
+   這支程式不會把金鑰內容印出來。
+
+3. **更新 Render**
+   Render → 你的服務 → Environment → `GOOGLE_SERVICE_ACCOUNT_JSON`
+   → 把 `credential.b64.txt` 的內容整份貼上去 → Save changes（會自動重新部署）。
+
+4. **確認線上跑的是新金鑰**
+
+   打開 `https://<你的網址>/api/health`，看 `credentials.keyId`：
+
+   ```json
+   "credentials": { "ok": true, "keyId": "3f9a1c22", "clientEmail": "id-grandpa@…" }
+   ```
+
+   `keyId` 是金鑰 ID 的前 8 碼。**變成新的那一串才算成功**，還是舊的就是 Render 沒生效。
+
+5. **刪掉舊金鑰**
+   回到 Cloud Console 的「金鑰」分頁，刪掉舊的那一把（對照金鑰 ID 前幾碼別刪錯）。
+   刪完重新整理一次 `/api/health`，`ok` 仍是 `true` 就完成了。
+
+6. **清掉暫存檔**
+
+   ```bash
+   rm credential.b64.txt
+   ```
+
+   下載的 `prandpa-xxxxxxxx.json` 也建議刪掉或收到密碼管理器裡。
+
+試算表的分享設定不用動——服務帳號的信箱沒變，換的只是它的金鑰。
+
+---
+
 ### 5. 驗證連線
 
 ```bash

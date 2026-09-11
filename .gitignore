@@ -42,3 +42,9 @@ next-env.d.ts
 
 # 範例環境變數要進版控
 !.env.example
+
+# 換金鑰時 scripts/set-credentials.mjs 產生的暫存檔，是機密，貼完 Render 就刪
+credential.b64.txt
+# Google 下載的服務帳號金鑰，別放進版控
+*-service-account*.json
+prandpa-*.json
