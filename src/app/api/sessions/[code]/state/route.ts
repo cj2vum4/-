@@ -17,8 +17,9 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
 
     const pin = hostPin(req);
     if (pin) {
-      const { assertHost } = await import("@/lib/game");
-      await assertHost(code, pin);
+      // 讀取放行封存場次，主持人按下「結束」後畫面才不會開始噴 404
+      const { assertHostReadOnly } = await import("@/lib/game");
+      await assertHostReadOnly(code, pin);
       return jsonOk(await getHostSnapshot(code));
     }
 

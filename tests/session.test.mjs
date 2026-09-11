@@ -75,9 +75,10 @@ const closed = await call(`/${a.code}/status`, {
 ok("結束場次成功", closed.status === 200, JSON.stringify(closed.json));
 check("已標記封存", closed.json.session.archived, true);
 
-// ---- 封存後就進不去了 ----
+// ---- 封存後不能再玩，但密碼仍要找得到那一場（散場後回來看紀錄用的） ----
 const afterLookup = await call("/lookup", { method: "POST", body: { password: a.password } });
-ok("封存後密碼失效", afterLookup.status === 404, `HTTP ${afterLookup.status}`);
+check("封存後密碼仍找得到場次", afterLookup.json.session?.code, a.code);
+check("而且標記為已結束", afterLookup.json.session?.archived, true);
 
 const afterJoin = await call(`/${a.code}/join`, {
   method: "POST",

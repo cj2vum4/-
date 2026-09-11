@@ -38,6 +38,12 @@ export interface StoreDriver {
    * 場次一多，每場三個分頁很快就看不完，收成一個才找得到東西。
    */
   archiveSession(code: string, sheet: ArchiveSheet): Promise<void>;
+
+  /**
+   * 讀回封存分頁的原始列。場次結束後玩家要回顧自己的紀錄，資料就只剩這裡。
+   * 分頁不存在時回 null。
+   */
+  readArchive(code: string): Promise<(string | number)[][] | null>;
 }
 
 /** 封存分頁的內容，已排好版，driver 只負責寫進去 */

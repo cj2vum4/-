@@ -425,6 +425,15 @@ function Console({
       ) : null}
 
       {/* ---------- 調配 ---------- */}
+      {session?.archived ? (
+        <Notice kind="info">
+          本場次已結束並封存。資料已彙整成試算表裡的「{code}」分頁，
+          工作分頁已刪除，這裡不能再調整任何數值。
+          <br />
+          玩家用原本的手機打開仍看得到自己的紀錄與聘書。
+        </Notice>
+      ) : null}
+
       {tab === "grant" ? (
         <div className="space-y-3">
           <div className="grid gap-2 sm:grid-cols-2">

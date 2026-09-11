@@ -491,6 +491,23 @@ export class SheetsDriver implements StoreDriver {
     ]);
   }
 
+  async readArchive(code: string): Promise<(string | number)[][] | null> {
+    await this.init();
+    const tab = archiveTabName(code);
+    if (!this.knownTabs.has(tab)) {
+      await this.refreshTabs();
+      if (!this.knownTabs.has(tab)) return null;
+    }
+    const res = await withRetry(() =>
+      this.api.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: range(tab, "A1:N2000"),
+        valueRenderOption: "UNFORMATTED_VALUE",
+      }),
+    );
+    return (res.data.values ?? []) as (string | number)[][];
+  }
+
   /** 刪掉指定分頁。不存在的直接略過，重複封存也不會出錯。 */
   private async deleteTabs(titles: string[]): Promise<void> {
     const res = await withRetry(() =>

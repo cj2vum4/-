@@ -257,6 +257,8 @@ export interface SessionPublicMeta {
   peerPower: "value" | "hidden";
   showPrestige: boolean;
   certsIssued: boolean;
+  /** 已封存：工作分頁已彙整並刪除，只剩試算表裡的那一個分頁 */
+  archived: boolean;
 }
 
 /** 玩家端輪詢拿到的內容 */

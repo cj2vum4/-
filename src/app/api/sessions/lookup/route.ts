@@ -22,6 +22,8 @@ export async function POST(req: Request) {
         stageId: session.stageId,
         stageLabel: stage?.label ?? session.stageId,
         allowJoin: stage?.allowJoin ?? false,
+        // 已結束的場次只能回顧，不能再進場
+        archived: session.archived || session.status === "closed",
       },
     });
   });

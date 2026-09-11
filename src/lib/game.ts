@@ -265,6 +265,7 @@ function publicMeta(s: SessionMeta): SessionPublicMeta {
     peerPower: stage?.peerPower ?? "hidden",
     showPrestige: stage?.showPrestige ?? false,
     certsIssued: s.certsIssued,
+    archived: s.archived,
   };
 }
 
@@ -366,20 +367,27 @@ export async function createSession(input: {
 /**
  * 用開場密碼找場次。玩家與主持人都走這裡。
  *
- * 只認還開著的場次：已結束或已封存的場次，密碼就失效了，
- * 不然隔週用同一組密碼會誤入上一場。
+ * 先找還開著的；找不到才退而求其次找已結束的，讓玩家散場後還能回來看自己的紀錄。
+ * 順序很重要：同一組密碼被重複用來開新場時，一定要進到新的那一場，
+ * 不能掉回上一場的回顧。
  */
 export async function findByPassword(password: string): Promise<SessionMeta> {
   const pw = (password ?? "").trim();
   if (!pw) throw new GameError("BAD_REQUEST", "請輸入開場密碼");
 
   const all = await getDriver().listSessions();
-  const hit = all.find((s) => s.password === pw && !s.archived && s.status !== "closed");
-  if (!hit) throw new GameError("SESSION_NOT_FOUND", "無此場次");
-  return hit;
+  const live = all.find((s) => s.password === pw && !s.archived && s.status !== "closed");
+  if (live) return live;
+
+  // 已結束的場次挑最近的一場——同一組密碼可能辦過好幾次
+  const ended = all
+    .filter((s) => s.password === pw)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (!ended) throw new GameError("SESSION_NOT_FOUND", "無此場次");
+  return ended;
 }
 
-/** 讀場次設定。會走快取，不額外打儲存層。 */
+/** 讀場次設定。會走快取；封存的場次也讀得到（只是玩家名單是空的）。 */
 export async function getSessionMeta(code: string): Promise<SessionMeta> {
   return (await getEntry(code)).session;
 }
@@ -414,10 +422,21 @@ export async function availableCharacters(code: string): Promise<string[]> {
  * session.hostPin 即可，呼叫端一律不用動。
  */
 export async function assertHost(code: string, pin: string): Promise<SessionMeta> {
-  const entry = await getEntry(code);
-  if (entry.session.archived) {
+  const session = await assertHostReadOnly(code, pin);
+  if (session.archived) {
     throw new GameError("SESSION_NOT_FOUND", "本場次已封存，無法再操作");
   }
+  return session;
+}
+
+/**
+ * 只驗身分、不擋封存。
+ *
+ * 場次結束後主持台還是會繼續輪詢狀態；如果一律擋掉，主持人按下「結束」的那一刻
+ * 畫面就開始噴 404。讀取放行、寫入照擋（那是 assertHost 的事）。
+ */
+export async function assertHostReadOnly(code: string, pin: string): Promise<SessionMeta> {
+  const entry = await getEntry(code);
   if (!pin || entry.session.password !== pin) {
     throw new GameError("UNAUTHORIZED", "開場密碼不正確");
   }
@@ -936,7 +955,8 @@ function buildArchiveRows(entry: CacheEntry, log: LogEntry[]): (string | number)
     [],
     ["【玩家】"],
     [
-      "玩家代碼", "角色", "暱稱", "聘書名次", "職位", "稱號",
+      // 通行碼要留著——場次結束後玩家回來看紀錄，就是靠它認人
+      "玩家代碼", "通行碼", "角色", "暱稱", "聘書名次", "職位", "稱號",
       "真實陣營", "隱藏分支", "勢力值", "威望值", "血量", "狀態", "加入時間",
     ],
   ];
@@ -947,6 +967,7 @@ function buildArchiveRows(entry: CacheEntry, log: LogEntry[]): (string | number)
   for (const p of ordered) {
     rows.push([
       p.id,
+      p.joinCode,
       p.name,
       p.nickname,
       p.certRank || "",
@@ -1622,6 +1643,173 @@ export async function transferPower(
     pushLog(entry, ...logs);
     return { balance: nextFrom.power };
   });
+}
+
+// ---------------- 場次回顧（封存後） ----------------
+
+/**
+ * 封存後的個人回顧。
+ *
+ * 場次結束時工作分頁就刪了，資料只剩彙整分頁，所以這裡把它讀回來再解析。
+ * 格式是本檔的 buildArchiveRows 自己寫的，所以用區塊標記（【玩家】【流水帳】）
+ * 定位很穩定；但畢竟是人也會去編輯的試算表，解析一律做防呆，欄位對不上就當沒有。
+ */
+export interface ReviewSnapshot {
+  view: "review";
+  session: { code: string; title: string; finalStage: string; endedAt: string };
+  me: {
+    id: string;
+    name: string;
+    nickname: string;
+    power: number;
+    prestige: number;
+    hp: number;
+    certificate: Certificate | null;
+  };
+  /** 只有自己的那幾筆 */
+  log: Array<{
+    ts: string;
+    type: string;
+    resource: string;
+    delta: number | "";
+    balanceAfter: number | "";
+    reason: string;
+  }>;
+  certsIssued: boolean;
+}
+
+const cell = (row: (string | number)[] | undefined, i: number): string =>
+  row?.[i] === undefined || row[i] === null ? "" : String(row[i]);
+
+/** 找到某個區塊的標題列位置。找不到回 -1。 */
+function sectionAt(rows: (string | number)[][], marker: string): number {
+  return rows.findIndex((r) => cell(r, 0).trim() === marker);
+}
+
+/**
+ * 取出一個區塊：欄位名列 + 資料列。
+ *
+ * 刻意用「欄位名」而不是固定位置來取值。彙整分頁的欄位是會增加的
+ * （通行碼就是後來才補的），寫死位置的話舊的封存讀起來會整排錯開，
+ * 而且是靜默錯開——顯示出來的數字全是別欄的值。
+ */
+function section(rows: (string | number)[][], marker: string) {
+  const at = sectionAt(rows, marker);
+  if (at < 0) return { index: {} as Record<string, number>, rows: [] as (string | number)[][] };
+
+  const header = rows[at + 1] ?? [];
+  const index: Record<string, number> = {};
+  header.forEach((name, i) => {
+    const key = String(name ?? "").trim();
+    if (key) index[key] = i;
+  });
+
+  const data: (string | number)[][] = [];
+  for (let i = at + 2; i < rows.length; i++) {
+    const row = rows[i] ?? [];
+    const first = cell(row, 0).trim();
+    if (!first || first.startsWith("【")) break;
+    data.push(row);
+  }
+  return { index, rows: data };
+}
+
+/** 依欄位名取值。欄位不存在時回空字串，不會拿到別欄的內容。 */
+function field(row: (string | number)[], index: Record<string, number>, name: string): string {
+  const i = index[name];
+  return i === undefined ? "" : cell(row, i);
+}
+
+/**
+ * 讀封存分頁，回傳這位玩家的回顧。
+ *
+ * 認人方式依封存當時的欄位而定：
+ *   有「通行碼」欄 → 玩家代碼 + 通行碼，跟進行中的場次同一套
+ *   沒有（早期的封存）→ 只比對玩家代碼。玩家代碼存在各自的瀏覽器裡、
+ *     介面上從不顯示，強度雖然低一點，但總比讓那一場的人完全看不到自己的紀錄好。
+ */
+export async function getReviewSnapshot(
+  code: string,
+  playerId: string,
+  joinCode: string,
+): Promise<ReviewSnapshot> {
+  const rows = await getDriver().readArchive(code);
+  if (!rows || rows.length === 0) {
+    throw new GameError("SESSION_NOT_FOUND", "找不到這個場次的紀錄");
+  }
+
+  const meta = Object.fromEntries(
+    rows.slice(0, 6).map((r) => [cell(r, 0).trim(), cell(r, 1)]),
+  );
+
+  const players = section(rows, "【玩家】");
+  const hasJoinCode = players.index["通行碼"] !== undefined;
+  const wanted = playerId.trim();
+
+  const mine = players.rows.find((r) => {
+    if (field(r, players.index, "玩家代碼").trim() !== wanted) return false;
+    if (!hasJoinCode) return true;
+    return field(r, players.index, "通行碼").trim() === joinCode.trim();
+  });
+  if (!mine) {
+    // 不區分「查無此人」與「通行碼不對」，免得變成猜通行碼的工具
+    throw new GameError("UNAUTHORIZED", "找不到你在這個場次的紀錄");
+  }
+
+  const get = (name: string) => field(mine, players.index, name);
+  const certRank = Number(get("聘書名次")) || 0;
+  const nickname = get("暱稱");
+  const name = get("角色");
+
+  const log = section(rows, "【流水帳】");
+  const myLog = log.rows
+    // 流水帳沒有存玩家代碼，用角色名比對——同一場裡角色是唯一的，不會認錯人
+    .filter((r) => field(r, log.index, "角色").trim() === name)
+    .map((r) => {
+      const delta = field(r, log.index, "變動");
+      const after = field(r, log.index, "變動後");
+      return {
+        ts: field(r, log.index, "時間"),
+        type: field(r, log.index, "類型"),
+        resource: field(r, log.index, "資源"),
+        delta: delta === "" ? ("" as const) : Number(delta),
+        balanceAfter: after === "" ? ("" as const) : Number(after),
+        // 來源類型不給玩家，跟進行中的場次一致
+        reason: field(r, log.index, "事由"),
+      };
+    })
+    .reverse();
+
+  return {
+    view: "review",
+    session: {
+      code: cell(rows[0], 1) || code,
+      title: meta["名稱"] ?? code,
+      finalStage: meta["最終階段"] ?? "",
+      endedAt: meta["結束時間"] ?? "",
+    },
+    me: {
+      id: playerId,
+      name,
+      nickname,
+      power: Number(get("勢力值")) || 0,
+      prestige: Number(get("威望值")) || 0,
+      hp: Number(get("血量")) || 0,
+      certificate: certRank
+        ? {
+            rank: certRank,
+            nickname,
+            characterName: name,
+            position: get("職位") || positionForRank(certRank),
+            title: get("稱號") || titleForRank(certRank),
+            date: cell(rows[0], 1) || code,
+          }
+        : null,
+    },
+    log: myLog,
+    // 有人拿到聘書就代表主持人發過，故事復盤可以看
+    certsIssued: players.rows.some((r) => Number(field(r, players.index, "聘書名次")) > 0),
+  };
 }
 
 // ---------------- 第一週投票 ----------------

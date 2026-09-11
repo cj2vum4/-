@@ -333,6 +333,33 @@ try {
   await player.click('button:has-text("返回")');
   await player.waitForSelector("text=場 次 資 訊", { timeout: 20000 });
   console.log("  PASS  故事復盤可開可關");
+  // ---- 11. 場次結束後，玩家回來看得到自己的紀錄 ----
+  await host.click('nav button:has-text("設定")');
+  // 結束的瞬間，玩家端還在輪詢的那一發會 404——那正是客戶端用來察覺
+  // 「這場結束了」的訊號，不是錯誤。只在這段期間放行。
+  await expectFailure(async () => {
+    host.once("dialog", (d) => d.accept());
+    await host.click('button:has-text("結束")');
+    await host.waitForTimeout(2500);
+    await player.reload({ waitUntil: "networkidle" });
+    await player.waitForSelector("text=回顧", { timeout: 20000 });
+  });
+  const reviewText = await player.innerText("body");
+  check("結束後顯示回顧畫面", /我 的 紀 錄/.test(reviewText), true);
+  check("回顧看得到最終勢力值", /最終勢力值/.test(reviewText), true);
+  check("回顧看得到聘書", /聘\s*書/.test(reviewText), true);
+  check("回顧看得到自己的暱稱", /阿謙/.test(reviewText), true);
+  await shot(player, "17-player-review");
+
+  // 復盤在散場後也還看得到
+  await player.click('button:has-text("查看故事復盤")');
+  await player.waitForSelector("text=陣營部分復盤", { timeout: 20000 });
+  check("散場後仍看得到故事復盤", true, true);
+  await player.click('button:has-text("返回")');
+  await player.waitForSelector("text=我 的 紀 錄", { timeout: 20000 });
+
+  await assertNoPageScroll(player, "玩家（回顧）", []);
+  console.log("  PASS  場次結束後玩家仍看得到自己的紀錄");
 } finally {
   await browser.close();
 }

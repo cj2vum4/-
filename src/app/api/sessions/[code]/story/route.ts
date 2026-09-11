@@ -1,6 +1,6 @@
 import { handle, jsonOk, playerAuth, requireCode } from "@/lib/api-helpers";
 import { GameError } from "@/lib/errors";
-import { assertPlayer, getSessionMeta } from "@/lib/game";
+import { assertPlayer, getReviewSnapshot, getSessionMeta } from "@/lib/game";
 import { STORY, STORY_EPILOGUE, STORY_SUBTITLE, STORY_TITLE } from "@/lib/story";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +19,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
     const { code: raw } = await ctx.params;
     const code = requireCode(raw);
     const { playerId, joinCode } = playerAuth(req);
-    await assertPlayer(code, playerId, joinCode);
 
     const session = await getSessionMeta(code);
-    if (!session.certsIssued) {
-      throw new GameError("BAD_REQUEST", "故事復盤要等主持人發放聘書之後才會公開");
+    if (session.archived) {
+      // 封存後工作分頁沒了，改用彙整分頁認人。散場後還想重看結局是很自然的事。
+      const review = await getReviewSnapshot(code, playerId, joinCode);
+      if (!review.certsIssued) {
+        throw new GameError("BAD_REQUEST", "這個場次沒有發放聘書，沒有故事復盤");
+      }
+    } else {
+      await assertPlayer(code, playerId, joinCode);
+      if (!session.certsIssued) {
+        throw new GameError("BAD_REQUEST", "故事復盤要等主持人發放聘書之後才會公開");
+      }
     }
 
     return jsonOk({

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Certificate } from "@/components/certificate";
+import { SessionReview } from "@/components/session-review";
 import { StoryView } from "@/components/story-view";
 import { CharacterPoster } from "@/components/character-poster";
 import { LogFeed } from "@/components/log-feed";
@@ -48,20 +49,65 @@ interface CharacterOption {
 export function PlayerPanel({ code }: { code: string }) {
   /** undefined = 還在讀 localStorage */
   const [me, setMe] = useState<PlayerIdentity | null | undefined>(undefined);
+  /** undefined = 還在問伺服器這場結束了沒 */
+  const [ended, setEnded] = useState<boolean | undefined>(undefined);
 
   useEffect(() => {
     setMe(loadPlayerIdentity(code));
   }, [code]);
 
-  if (me === undefined) {
+  useEffect(() => {
+    let alive = true;
+    // 場次結束後工作分頁就沒了，一般的入場與輪詢都會失敗，
+    // 所以先問清楚這場還在不在，再決定要顯示遊戲畫面還是回顧。
+    api<{ session: { status: string; archived?: boolean } }>(`/api/sessions/${code}`)
+      .then((d) => alive && setEnded(Boolean(d.session.archived) || d.session.status === "closed"))
+      .catch((err) => {
+        if (!alive) return;
+        // 查不到場次資料多半就是已經封存了（findSession 對封存場次會回 404）
+        setEnded(err instanceof ApiError && err.code === "SESSION_NOT_FOUND");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [code]);
+
+  if (me === undefined || ended === undefined) {
     return (
       <PageShell>
         <p className="py-20 text-center text-sm text-muted">讀取中…</p>
       </PageShell>
     );
   }
+
+  if (ended) {
+    if (me === null) {
+      return (
+        <PageShell>
+          <BackLink href="/player" label="重新輸入場次" />
+          <div className="py-16 text-center">
+            <p className="text-lg font-bold text-paper">這個場次已經結束了</p>
+            <p className="mt-2 text-sm leading-relaxed text-muted">
+              結束後就不能再入場。如果你玩過這一場，
+              <br />
+              用當初那支手機、那個瀏覽器打開就看得到自己的紀錄。
+            </p>
+          </div>
+        </PageShell>
+      );
+    }
+    return <SessionReview code={code} me={me} onReset={() => setMe(null)} />;
+  }
+
   if (me === null) return <CharacterPicker code={code} onJoined={setMe} />;
-  return <LiveBoard code={code} me={me} onReset={() => setMe(null)} />;
+  return (
+    <LiveBoard
+      code={code}
+      me={me}
+      onReset={() => setMe(null)}
+      onSessionEnded={() => setEnded(true)}
+    />
+  );
 }
 
 // ---------------- 選角 ----------------
@@ -287,14 +333,24 @@ function LiveBoard({
   code,
   me,
   onReset,
+  onSessionEnded,
 }: {
   code: string;
   me: PlayerIdentity;
   onReset: () => void;
+  onSessionEnded: () => void;
 }) {
   const { snapshot, error, loading, refresh } = usePlayerState(code, me);
   const [tab, setTab] = useState("me");
   const [showStory, setShowStory] = useState(false);
+
+  // 主持人按下「結束」的瞬間，玩家這邊的輪詢就會開始 404。與其讓畫面卡在錯誤，
+  // 直接切到回顧——那正是這個時候玩家想看的東西。
+  useEffect(() => {
+    if (error?.code === "SESSION_NOT_FOUND" || error?.code === "PLAYER_NOT_FOUND") {
+      onSessionEnded();
+    }
+  }, [error, onSessionEnded]);
 
   const session = snapshot?.session;
   const stage = session ? STAGE_MAP[session.stageId] : undefined;

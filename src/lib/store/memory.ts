@@ -105,4 +105,8 @@ export class MemoryDriver implements StoreDriver {
     bucket.votes = [];
     bucket.log = [];
   }
+
+  async readArchive(code: string): Promise<(string | number)[][] | null> {
+    return buckets.get(code)?.archive?.map((r) => [...r]) ?? null;
+  }
 }
