@@ -113,3 +113,39 @@ button {
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom, 0px);
 }
+
+/* ---- 線上主持：每個劇本自己的色調 ----
+ * Tailwind v4 的色票就是 CSS 變數，在外層覆寫後，底下的 text-gold、bg-panel
+ * 等 class 會自動換成該劇本的顏色，元件不用各寫一套。 */
+
+.theme-fengtuz,
+.theme-tiancai {
+  background-color: var(--color-ink);
+  min-height: 100dvh;
+}
+
+/* 瘋兔子：血紅、濕冷的暗室 */
+.theme-fengtuz {
+  --color-ink: #0c0406;
+  --color-lacquer: #140709;
+  --color-panel: #1c0b0f;
+  --color-panel-2: #271218;
+  --color-line: #45212b;
+  --color-gold: #e0676b;
+  --color-gold-soft: #f4b6b3;
+  --color-muted: #a38388;
+  background-image: radial-gradient(ellipse 90% 45% at 50% -10%, rgba(200, 34, 34, 0.18), transparent 70%);
+}
+
+/* 天才在左我在右：審判者的暗紫與舊金 */
+.theme-tiancai {
+  --color-ink: #08070d;
+  --color-lacquer: #0f0d18;
+  --color-panel: #161325;
+  --color-panel-2: #1f1a33;
+  --color-line: #352d52;
+  --color-gold: #c8a97e;
+  --color-gold-soft: #ecd9b8;
+  --color-muted: #948bab;
+  background-image: radial-gradient(ellipse 80% 45% at 50% -10%, rgba(126, 94, 200, 0.16), transparent 70%);
+}

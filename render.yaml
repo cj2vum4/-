@@ -21,5 +21,9 @@ services:
         sync: false
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
+      # 線上主持（瘋兔子）的線索來源。沒設時用舊的 publishable key，
+      # 關掉 cards 表的匿名讀取後就必須設 secret key，見 tools/online/supabase_schema.sql
+      - key: SUPABASE_SECRET_KEY
+        sync: false
       - key: NODE_VERSION
         value: "22"

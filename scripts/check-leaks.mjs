@@ -42,10 +42,21 @@ try {
 
 const findings = [];
 
+/**
+ * 線上主持（瘋兔子、天才在左我在右）的劇本內容只能由伺服器依身分回傳。
+ * 這些字只出現在 content/online/ 的劇本內容裡，任何瀏覽器 chunk 都不該看到。
+ * 與上面不同，這裡檢查全部 chunk——主持台也是瀏覽器，內容一樣只能經過 API 取得。
+ */
+const ONLINE_CONTENT = ["雍九", "蒼語山", "昨日救贖", "UNLOCK-BOOK2", "sb_publishable_"];
+
 for (const name of files) {
   const path = join(CHUNK_DIR, name);
   const text = readFileSync(path, "utf8");
   // 只檢查玩家端會載入的 chunk：主持人本來就看得到陣營
+  for (const word of ONLINE_CONTENT) {
+    if (text.includes(word)) findings.push(`${name}：線上主持的劇本內容「${word}」`);
+  }
+
   const isPlayerChunk = text.includes("入府");
   if (!isPlayerChunk) continue;
 
@@ -69,5 +80,5 @@ if (findings.length > 0) {
 }
 
 console.log(
-  `✅ 玩家端 bundle 沒有洩漏陣營對應、線索卡答案與故事復盤（檢查了 ${files.length} 個 chunk）`,
+  `✅ 前端 bundle 沒有洩漏陣營對應、線索卡答案、故事復盤與線上主持劇本內容（檢查了 ${files.length} 個 chunk）`,
 );

@@ -43,6 +43,13 @@ export default function LandingPage() {
         />
       </div>
 
+      <Link
+        href="/online"
+        className="fade-up mt-6 block rounded-xl border border-line/70 bg-panel/50 px-5 py-4 text-center text-sm text-muted transition-colors hover:border-gold/60 hover:text-gold-soft"
+      >
+        其他劇本的線上主持（瘋兔子、天才在左我在右）→
+      </Link>
+
       <footer className="mt-12 text-center text-xs text-muted/70">
         <p>
           資料庫模式：

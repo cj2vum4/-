@@ -42,6 +42,35 @@
 
 ---
 
+## 線上主持：瘋兔子、天才在左我在右
+
+原本放在 starfishlarp（GitHub Pages）的兩套線上開本工具，搬進這個服務改由 Node 執行。
+入口是 `/online`（九爺首頁下方也有連結）。
+
+| | 網址 |
+|---|---|
+| 主持人開場／回到主持台 | `/online/host` → `/online/host/{代碼}` |
+| 玩家入場 | `/online/join?code={代碼}`（可加 `&role=` 預選角色） |
+
+**為什麼要搬**：以前劇本全文、GM 筆記、所有線索都寫在前端 HTML 或公開可讀的
+Supabase 表裡，玩家打開原始碼就能看完整本。現在劇本內容只在伺服器上，
+玩家只會收到「發給全體＋發給自己角色＋自己輸入代碼解開」的線索與已開放的劇本段落；
+第二本劇本在開放前連標題都不會出現，角色卡圖片也要驗過身分才給。
+
+- **劇本內容**：`content/online/<劇本>/`，執行時用 fs 讀取，不會被打包進前端。
+  天才在左的線索、劇本、卡圖都在這裡；瘋兔子的線索仍在 Supabase `cards` 表，改由伺服器讀取
+  （`SUPABASE_SECRET_KEY`，詳見 `tools/online/supabase_schema.sql` 關閉匿名讀取的步驟）。
+- **場次狀態**：同一份 Google Sheet 的「線上場次」分頁，一場一列（JSON）。沒設憑證時退回記憶體。
+- **身分**：主持人開場時自設主持密碼；玩家選角＋暱稱，換手機時用相同角色與暱稱認回。
+- **程式**：`src/lib/online/`（引擎、儲存、劇本定義）、`src/app/online/`（頁面）、`src/app/api/online/`。
+- **測試**：`ONLINE_FENGTUZ_MOCK=1` 啟動後跑 `npm run test:online`；`npm run check:leaks` 也會檢查劇本內容沒進前端。
+- **OCR 匯入工具**：`tools/online/ocr_batch.py`。
+
+> ⚠ 這個 repo 是 public，`content/online/` 的內容在 GitHub 上看得到（原本在 starfishlarp 也一樣公開）。
+> 這次改動擋的是「現場玩家從網頁偷看」；若要連 repo 都不留內容，下一步是把內容搬到私有儲存（例如同一份 Google Sheet）。
+
+---
+
 ## 手機版介面
 
 主持人與玩家都用手機，所以兩端都是**固定框架＋底部導覽列**，而不是長捲頁：

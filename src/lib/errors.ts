@@ -8,7 +8,8 @@ export type GameErrorCode =
   | "BAD_DATE"
   | "UNAUTHORIZED"
   | "PLAYER_NOT_FOUND"
-  | "NAME_TAKEN";
+  | "NAME_TAKEN"
+  | "ROLE_TAKEN";
 
 const STATUS: Record<GameErrorCode, number> = {
   SESSION_NOT_FOUND: 404,
@@ -21,6 +22,7 @@ const STATUS: Record<GameErrorCode, number> = {
   UNAUTHORIZED: 401,
   PLAYER_NOT_FOUND: 404,
   NAME_TAKEN: 409,
+  ROLE_TAKEN: 409,
 };
 
 export class GameError extends Error {

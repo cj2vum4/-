@@ -48,7 +48,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * 主持人連續快速操作時會撞到 429。這裡用指數退避重試，
  * 讓短暫的尖峰自己消化掉，而不是把錯誤丟給主持人。
  */
-async function withRetry<T>(fn: () => Promise<T>, attempts = 7): Promise<T> {
+export async function withRetry<T>(fn: () => Promise<T>, attempts = 7): Promise<T> {
   // 配額是「每分鐘」重置，所以退避總時長要能跨過一分鐘的邊界：
   // 0.6 + 1.2 + 2.4 + 4.8 + 9.6 + 19.2 ≈ 38 秒，足以等到配額回復
   let delay = 600;
@@ -86,7 +86,7 @@ export function sheetsConfigured(): boolean {
   );
 }
 
-function buildAuth() {
+export function buildAuth() {
   const credentials = readCredentials();
   // readCredentials 回 null 代表要走 GOOGLE_APPLICATION_CREDENTIALS / ADC
   return credentials

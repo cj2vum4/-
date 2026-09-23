@@ -25,6 +25,7 @@ export function AppShell({
   tabs,
   active,
   onTabChange,
+  wide = false,
 }: {
   header: ReactNode;
   children: ReactNode;
@@ -33,9 +34,11 @@ export function AppShell({
   tabs: TabDef[];
   active: string;
   onTabChange: (id: string) => void;
+  /** 主持台在筆電上用，內容多，放寬版面 */
+  wide?: boolean;
 }) {
   return (
-    <div className="app-shell mx-auto w-full max-w-lg">
+    <div className={`app-shell mx-auto w-full ${wide ? "max-w-3xl" : "max-w-lg"}`}>
       <header className="shrink-0 border-b border-line/60 bg-lacquer/90 px-4 py-2.5 backdrop-blur">
         {header}
       </header>
