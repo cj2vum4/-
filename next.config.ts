@@ -1,6 +1,17 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    /**
+     * 建置時只開 1 個 worker。
+     *
+     * Render 的建置機回報有 47 顆 CPU，Next.js 預設就開 47 個 worker 平行收集頁面資料，
+     * 每個都是獨立的 Node 程序，一下子就超過免費方案的 512MB，程序被系統直接砍掉——
+     * 部署紀錄停在「Collecting page data using 47 workers」、沒有任何錯誤訊息就是這個症狀。
+     * 這個專案頁面很少，1 個 worker 幾秒就跑完。
+     */
+    cpus: 1,
+  },
   typescript: {
     /**
      * 型別檢查改成建置流程中的獨立一步（見 package.json 的 build 指令）。
