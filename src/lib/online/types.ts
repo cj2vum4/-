@@ -91,7 +91,7 @@ export interface HostCatalog {
   clues: HostClue[];
   templates: BroadcastTemplate[];
   handbook: HandbookSection[];
-  /** 線索來源的狀態，例如 Supabase 連不上時要讓主持人知道 */
+  /** 線索來源的狀態，例如瘋兔子尚未匯入線索時要讓主持人知道 */
   clueSourceNote?: string;
 }
 

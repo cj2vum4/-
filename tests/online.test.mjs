@@ -110,7 +110,7 @@ const f = (await call("", { method: "POST", body: { script: "fengtuz", pin: PIN 
 ok("開場取得 RT- 代碼", /^RT-/.test(f ?? ""));
 const cat = (await call(`/${f}/catalog`, { headers: host })).json.catalog;
 ok("主持人拿到線索全集", cat?.clues.length > 0, JSON.stringify(cat).slice(0, 200));
-ok("線索轉成繁體", cat.clues.some((c) => c.title === "遊戲規則"));
+ok("線索依標題與分類載入", cat.clues.some((c) => c.title === "遊戲規則" && c.group === "故事背景"));
 const fp = (await call(`/${f}/join`, { method: "POST", body: { roleId: "xia-tong", nickname: "甲" } })).json.identity;
 const fq = (await call(`/${f}/join`, { method: "POST", body: { roleId: "jiang-qin", nickname: "乙" } })).json.identity;
 const first = cat.clues[0].id;

@@ -89,10 +89,17 @@ function generateCode(def: ScriptDef): string {
 
 // ---------------- 讀寫 ----------------
 
+/** 場次代碼前綴決定劇本，也就決定資料存在哪一份試算表 */
+function storeFor(code: string) {
+  const script = scriptForCode(code);
+  if (!script) throw new GameError("BAD_REQUEST", "場次代碼格式不正確");
+  return getOnlineStore(script);
+}
+
 async function load(code: string): Promise<OnlineSession> {
   const hit = cache.get(code);
   if (hit) return hit;
-  const s = await getOnlineStore().get(code);
+  const s = await storeFor(code).get(code);
   if (!s) throw new GameError("SESSION_NOT_FOUND", "找不到這個場次，請確認代碼");
   cache.set(code, s);
   return s;
@@ -106,7 +113,7 @@ function mutate<T>(code: string, fn: (s: OnlineSession) => T): Promise<T> {
     draft.rev += 1;
     draft.updatedAt = now();
     try {
-      await getOnlineStore().save(draft);
+      await storeFor(code).save(draft);
     } catch (err) {
       cache.delete(code);
       throw err;
@@ -125,7 +132,7 @@ export async function createOnlineSession(
   const p = (pin ?? "").trim();
   if (p.length < 4) throw new GameError("BAD_REQUEST", "主持密碼至少要 4 個字");
   const def = getScript(script);
-  const store = getOnlineStore();
+  const store = getOnlineStore(script);
 
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = generateCode(def);
@@ -236,7 +243,7 @@ export type HostAction =
 export async function hostAction(code: string, a: HostAction): Promise<void> {
   const current = await load(code);
   const def = getScript(current.script);
-  // 線索清單要在鎖外先載好（瘋兔子要打 Supabase），鎖內只做記憶體運算
+  // 線索清單要在鎖外先載好，鎖內只做記憶體運算
   const clues = a.action === "release" || a.action === "releaseGroup" ? await clueMap(def) : null;
 
   await mutate(code, (s) => {

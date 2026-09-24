@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { diagnoseCredentials } from "@/lib/store/credentials";
 import { schemaMismatchTabs } from "@/lib/store/sheets";
+import { onlineSheetId } from "@/lib/online/store";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +56,11 @@ export async function GET() {
           shape: cred.shape ?? null,
         },
         staleTabs,
+        // 線上主持各劇本用哪一份試算表；「共用九爺」代表沒設專屬的 ONLINE_SHEET_*
+        online: {
+          fengtuz: describeOnlineSheet(onlineSheetId("fengtuz"), spreadsheetId),
+          tiancai: describeOnlineSheet(onlineSheetId("tiancai"), spreadsheetId),
+        },
         problems,
         hint: usingSheets
           ? "已連上 Google Sheet。"
@@ -76,4 +82,10 @@ export async function GET() {
       { headers: { "cache-control": "no-store" } },
     );
   }
+}
+
+function describeOnlineSheet(id: string, main: string): string {
+  if (!id) return "未設定（記憶體模式）";
+  const masked = `${id.slice(0, 4)}…${id.slice(-4)}`;
+  return id === main ? `共用九爺的試算表（${masked}）` : `專屬試算表（${masked}）`;
 }

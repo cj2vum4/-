@@ -58,13 +58,16 @@ Supabase 表裡，玩家打開原始碼就能看完整本。現在劇本內容�
 第二本劇本在開放前連標題都不會出現，角色卡圖片也要驗過身分才給。
 
 - **劇本內容**：`content/online/<劇本>/`，執行時用 fs 讀取，不會被打包進前端。
-  天才在左的線索、劇本、卡圖都在這裡；瘋兔子的線索仍在 Supabase `cards` 表，改由伺服器讀取
-  （`SUPABASE_SECRET_KEY`，詳見 `tools/online/supabase_schema.sql` 關閉匿名讀取的步驟）。
-- **場次狀態**：同一份 Google Sheet 的「線上場次」分頁，一場一列（JSON）。沒設憑證時退回記憶體。
+  天才在左的線索、劇本、卡圖都在這裡；瘋兔子的線索在 `content/online/fengtuz/cards.json`
+  （已完全脫離 Supabase），用 `npm run import:fengtuz -- <ocr_output.json 或 Supabase 匯出的 cards.csv>` 產生。
+- **場次狀態**：Google Sheet 的「線上場次」分頁，一場一列（JSON）。瘋兔子與天才在左可各用一份試算表：
+  在 Render 設 `ONLINE_SHEET_FENGTUZ`、`ONLINE_SHEET_TIANCAI`（試算表網址 `/d/` 與 `/edit` 之間那串），
+  並把服務帳號 email 加為該試算表的編輯者；沒設就與九爺共用。`/api/health` 的 `online` 欄位會顯示各自用哪一份。
+  沒設憑證時退回記憶體。
 - **身分**：主持人開場時自設主持密碼；玩家選角＋暱稱，換手機時用相同角色與暱稱認回。
 - **程式**：`src/lib/online/`（引擎、儲存、劇本定義）、`src/app/online/`（頁面）、`src/app/api/online/`。
 - **測試**：`ONLINE_FENGTUZ_MOCK=1` 啟動後跑 `npm run test:online`；`npm run check:leaks` 也會檢查劇本內容沒進前端。
-- **OCR 匯入工具**：`tools/online/ocr_batch.py`。
+- **OCR 工具**：`tools/online/ocr_batch.py`（加 `--no-upload`，產生 ocr_output.json 後再用上面的匯入指令）。
 
 > ⚠ 這個 repo 是 public，`content/online/` 的內容在 GitHub 上看得到（原本在 starfishlarp 也一樣公開）。
 > 這次改動擋的是「現場玩家從網頁偷看」；若要連 repo 都不留內容，下一步是把內容搬到私有儲存（例如同一份 Google Sheet）。

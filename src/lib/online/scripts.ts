@@ -111,7 +111,7 @@ function buildFengtuz(): ScriptDef {
     codePrefix: "RT-",
     roles: c.roles,
     phases: c.phases,
-    // 瘋兔子的線索依 Supabase 的資料夾分組，分組在載入線索後才知道
+    // 瘋兔子的線索依 OCR 時的資料夾分組，分組在載入線索後才知道
     groups: [],
     unlocks: [],
     templates: c.templates,

@@ -71,7 +71,8 @@ class SheetsOnlineStore implements OnlineStore {
   private ready: Promise<void> | null = null;
   /** 場次代碼 → 列號（1-based） */
   private rows = new Map<string, number>();
-  private spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID ?? "";
+
+  constructor(private readonly spreadsheetId: string) {}
 
   private get api(): sheets_v4.Sheets {
     this.apiInstance ??= google.sheets({ version: "v4", auth: buildAuth() });
@@ -186,8 +187,28 @@ class SheetsOnlineStore implements OnlineStore {
   }
 }
 
-export function getOnlineStore(): OnlineStore {
-  const g = globalThis as unknown as { __onlineStore?: OnlineStore };
-  g.__onlineStore ??= sheetsConfigured() ? new SheetsOnlineStore() : new MemoryOnlineStore();
-  return g.__onlineStore;
+/**
+ * 每個劇本各自的試算表 ID。
+ *
+ * 瘋兔子與天才在左可以各用一份獨立的 Google Sheet（ONLINE_SHEET_FENGTUZ／ONLINE_SHEET_TIANCAI），
+ * 沒設就跟九爺共用 GOOGLE_SHEETS_SPREADSHEET_ID。新的試算表要把服務帳號的 email
+ * 加為「編輯者」，否則會讀寫失敗。
+ */
+export function onlineSheetId(script: OnlineScriptId): string {
+  const own = script === "fengtuz" ? process.env.ONLINE_SHEET_FENGTUZ : process.env.ONLINE_SHEET_TIANCAI;
+  return (own || process.env.GOOGLE_SHEETS_SPREADSHEET_ID || "").trim();
+}
+
+export function getOnlineStore(script: OnlineScriptId): OnlineStore {
+  const g = globalThis as unknown as { __onlineStores?: Map<string, OnlineStore> };
+  const stores = (g.__onlineStores ??= new Map());
+  const id = sheetsConfigured() ? onlineSheetId(script) : "";
+  // 同一份試算表共用同一個 store，列號索引才不會各記各的
+  const key = id || "memory";
+  let store = stores.get(key);
+  if (!store) {
+    store = id ? new SheetsOnlineStore(id) : new MemoryOnlineStore();
+    stores.set(key, store);
+  }
+  return store;
 }

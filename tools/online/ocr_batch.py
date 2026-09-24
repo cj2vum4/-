@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """
-批次 OCR 腳本：掃描 JPG/PDF → Claude Vision API → Supabase
+批次 OCR 腳本：掃描 JPG/PDF → Claude Vision API → ocr_output.json
+
+線上主持已脫離 Supabase，請一律加 --no-upload，產生 ocr_output.json 後執行：
+    npm run import:fengtuz -- ocr_output.json
+轉成 content/online/fengtuz/cards.json（伺服器讀的線索檔）。
 
 安裝依賴：
     pip install anthropic supabase pymupdf pillow tqdm
