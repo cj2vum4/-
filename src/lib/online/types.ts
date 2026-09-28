@@ -42,6 +42,8 @@ export interface HostClue {
   label: string;
   audience: ClueAudience;
   target?: string;
+  /** 同一張卡要發給多個角色（例如瘋兔子的兩人一組任務卡），優先於 target */
+  targets?: string[];
   reclaimable?: boolean;
   summary: string;
   body: string;

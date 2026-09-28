@@ -470,8 +470,13 @@ function ClueCard({
   const rel = snap.released[clue.id];
   const extraHolders = snap.seats.filter((s) => s.extra.includes(clue.id)).map((s) => roleName(catalog, s.roleId));
   const ended = snap.status === "ended";
+  const targets = clue.targets ?? (clue.target ? [clue.target] : []);
   const defaultLabel =
-    clue.audience === "all" ? "發給全體" : clue.audience === "role" && clue.target ? `發給${roleName(catalog, clue.target)}` : "";
+    clue.audience === "all"
+      ? "發給全體"
+      : clue.audience === "role" && targets.length
+        ? `發給${targets.map((id) => roleName(catalog, id)).join("、")}`
+        : "";
 
   return (
     <article className={`rounded-lg border px-3.5 py-3 ${rel ? "border-jade/50 bg-jade/5" : "border-line bg-panel"}`}>
@@ -686,31 +691,34 @@ function BroadcastTab({
 
 function BookTab({ catalog }: { catalog: HostCatalog }) {
   return (
-    <div className="space-y-4">
-      {catalog.handbook.map((h) => (
-        <Panel key={h.title}>
-          <SectionTitle>{h.title}</SectionTitle>
-          {h.note ? <p className="mb-3 text-sm leading-relaxed text-muted">{h.note}</p> : null}
-          {h.rows.length ? (
-            <table className="w-full text-left text-sm">
-              <tbody>
-                {h.rows.map((row, i) => (
-                  <tr key={i} className="border-t border-line/60 align-top">
-                    {row.map((cell, j) => (
-                      <td key={j} className={`whitespace-pre-wrap py-2 pr-3 ${j === 0 ? "text-gold/80 tabular" : "text-paper/90"}`}>
-                        {cell}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : null}
-        </Panel>
+    <div className="space-y-3">
+      {catalog.handbook.map((h, i) => (
+        // 手冊段落很長（瘋兔子的 DM 手冊一幕就上萬字），預設只展開第一段
+        <details key={h.title} open={i === 0} className="rounded-xl border border-line bg-panel/80">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-bold tracking-[0.15em] text-gold/90">{h.title}</summary>
+          <div className="border-t border-line/60 px-4 py-3">
+            {h.note ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-paper/85">{h.note}</p> : null}
+            {h.rows.length ? (
+              <table className="mt-2 w-full text-left text-sm">
+                <tbody>
+                  {h.rows.map((row, r) => (
+                    <tr key={r} className="border-t border-line/60 align-top">
+                      {row.map((cell, j) => (
+                        <td key={j} className={`whitespace-pre-wrap py-2 pr-3 ${j === 0 ? "text-gold/80 tabular" : "text-paper/90"}`}>
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : null}
+          </div>
+        </details>
       ))}
-      <Panel>
-        <SectionTitle>各階段流程</SectionTitle>
-        <ol className="space-y-2 text-sm">
+      <details className="rounded-xl border border-line bg-panel/80">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-bold tracking-[0.15em] text-gold/90">各階段流程</summary>
+        <ol className="space-y-2 border-t border-line/60 px-4 py-3 text-sm">
           {catalog.phases.map((p, i) => (
             <li key={p.name}>
               <span className="text-gold/80">
@@ -721,7 +729,7 @@ function BookTab({ catalog }: { catalog: HostCatalog }) {
             </li>
           ))}
         </ol>
-      </Panel>
+      </details>
     </div>
   );
 }

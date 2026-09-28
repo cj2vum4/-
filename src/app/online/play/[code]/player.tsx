@@ -291,7 +291,7 @@ function ScriptTab({ snap }: { snap: OnlinePlayerSnapshot }) {
             }`}
           >
             {d.body === null ? "🔒 " : ""}
-            {d.title.split("·")[0].trim()}
+            {navLabel(d.title)}
           </button>
         ))}
       </nav>
@@ -307,6 +307,15 @@ function ScriptTab({ snap }: { snap: OnlinePlayerSnapshot }) {
       ) : null}
     </div>
   );
+}
+
+/**
+ * 分幕按鈕的短標籤。「第一幕 · 蒼語山墓園」只顯示「第一幕」；
+ * 但「第一幕 · 小劇場」「第七幕 · 小劇場 3」要顯示小劇場，否則會跟本幕撞名。
+ */
+function navLabel(title: string) {
+  const [head, sub] = title.split("·").map((t) => t.trim());
+  return sub?.includes("小劇場") ? sub : head;
 }
 
 /** 預設翻到最新開放的那一段 */

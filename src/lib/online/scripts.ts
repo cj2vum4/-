@@ -66,13 +66,17 @@ interface TiancaiContent {
 interface FengtuzContent {
   roles: OnlineRole[];
   phases: OnlinePhase[];
+  groups: ClueGroup[];
+  unlocks: UnlockDef[];
   templates: BroadcastTemplate[];
   handbook: HandbookSection[];
 }
 
-function readContent<T>(script: OnlineScriptId): T {
-  return JSON.parse(readFileSync(join(CONTENT_ROOT, script, "content.json"), "utf8")) as T;
+function readJson<T>(script: OnlineScriptId, file: string): T {
+  return JSON.parse(readFileSync(join(CONTENT_ROOT, script, file), "utf8")) as T;
 }
+
+const readContent = <T,>(script: OnlineScriptId) => readJson<T>(script, "content.json");
 
 let tiancaiCache: TiancaiContent | null = null;
 const tiancai = () => (tiancaiCache ??= readContent<TiancaiContent>("tiancai"));
@@ -105,22 +109,24 @@ function buildTiancai(): ScriptDef {
 
 function buildFengtuz(): ScriptDef {
   const c = fengtuz();
+  // 人物劇本依幕切好的內容與 DM 手冊，由 tools/online/build-fengtuz-content.py 產生
+  const docs = readJson<Record<string, { hint: string; list: DocDef[] }>>("fengtuz", "docs.json");
+  const dmHandbook = readJson<HandbookSection[]>("fengtuz", "handbook.json");
   return {
     id: "fengtuz",
     title: "瘋兔子，白又白，砍下腦袋飛起來",
     codePrefix: "RT-",
     roles: c.roles,
     phases: c.phases,
-    // 瘋兔子的線索依 OCR 時的資料夾分組，分組在載入線索後才知道
-    groups: [],
-    unlocks: [],
+    groups: c.groups,
+    unlocks: c.unlocks,
     templates: c.templates,
-    handbook: c.handbook,
-    announcePhase: false,
+    handbook: [...c.handbook, ...dmHandbook],
+    announcePhase: true,
     selfUnlock: false,
     loadClues: loadFengtuzClues,
-    docsFor() {
-      return { hint: "", list: [] };
+    docsFor(roleId) {
+      return docs[roleId] ?? { hint: "", list: [] };
     },
   };
 }
@@ -155,11 +161,10 @@ export function scriptForCode(code: string): OnlineScriptId | null {
   return null;
 }
 
-/** 線索依分組整理；分組沒有預先定義時（瘋兔子）就用線索自帶的 group 產生 */
+/** 線索依分組整理：先照劇本定義的順序，線索帶了定義以外的分組就接在後面 */
 export function groupsOf(def: ScriptDef, clues: HostClue[]): ClueGroup[] {
-  if (def.groups.length) return def.groups;
-  const seen = new Set<string>();
-  const groups: ClueGroup[] = [];
+  const seen = new Set<string>(def.groups.map((g) => g.id));
+  const groups: ClueGroup[] = [...def.groups];
   for (const c of clues) {
     if (seen.has(c.group)) continue;
     seen.add(c.group);

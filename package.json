@@ -16,8 +16,7 @@
     "test:ui": "node tests/ui-smoke.mjs",
     "check:leaks": "node scripts/check-leaks.mjs",
     "archive:show": "node --env-file=.env.local --experimental-strip-types scripts/show-archive.mjs",
-    "test:online": "node tests/online.test.mjs",
-    "import:fengtuz": "node tools/online/import-fengtuz.mjs"
+    "test:online": "node tests/online.test.mjs"
   },
   "dependencies": {
     "googleapis": "^174.0.1",
@@ -32,7 +31,6 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "opencc-js": "^1.4.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

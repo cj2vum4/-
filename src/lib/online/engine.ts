@@ -322,22 +322,25 @@ export async function hostAction(code: string, a: HostAction): Promise<void> {
 }
 
 function release(s: OnlineSession, def: ScriptDef, clue: HostClue, to: string) {
-  let recipient: string;
+  let recipients: string[];
   if (to === "default") {
-    if (clue.audience === "all") recipient = "all";
-    else if (clue.audience === "role" && clue.target) recipient = clue.target;
+    const targets = clue.targets ?? (clue.target ? [clue.target] : []);
+    if (clue.audience === "all") recipients = ["all"];
+    else if (clue.audience === "role" && targets.length) recipients = targets;
     else throw new GameError("BAD_REQUEST", "這條線索要指定發給誰");
   } else if (to === "all") {
-    recipient = "all";
+    recipients = ["all"];
   } else if (def.roles.some((r) => r.id === to)) {
-    recipient = to;
+    recipients = [to];
   } else {
     throw new GameError("BAD_REQUEST", "沒有這個角色");
   }
 
   const prev = s.released[clue.id]?.to ?? [];
   const next =
-    recipient === "all" || prev.includes("all") ? ["all"] : [...new Set([...prev, recipient])];
+    recipients.includes("all") || prev.includes("all")
+      ? ["all"]
+      : [...new Set([...prev, ...recipients])];
   s.released[clue.id] = { to: next, at: now() };
 }
 

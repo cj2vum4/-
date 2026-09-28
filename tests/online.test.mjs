@@ -126,4 +126,20 @@ check(
 await act(f, { action: "freeSeat", roleId: "jiang-qin" });
 check("釋出角色後舊憑證失效", (await call(`/${f}/state`, { headers: as(fq) })).status, 401);
 
+console.log("\n[瘋兔子人物劇本]");
+const g = (await call("", { method: "POST", body: { script: "fengtuz", pin: PIN } })).json.code;
+const gw = (await call(`/${g}/join`, { method: "POST", body: { roleId: "wang-zhiyu", nickname: "丙" } })).json.identity;
+const gx = (await call(`/${g}/join`, { method: "POST", body: { roleId: "xia-tong", nickname: "丁" } })).json.identity;
+const docsOf = async (p) => (await call(`/${g}/state`, { headers: as(p) })).json.player.docs;
+ok("開場時劇本全部鎖住", (await docsOf(gw)).every((d) => d.body === null));
+await act(g, { action: "phase", phase: 1 });
+let dw = await docsOf(gw);
+ok("切到第一幕後第一幕可讀", dw.some((d) => d.title.startsWith("第一幕 · 瘋兔子") && d.body));
+ok("第一幕小劇場仍鎖住", dw.some((d) => d.title === "第一幕 · 小劇場" && d.body === null));
+ok("王之喻有專屬的驗牌小劇場", dw.some((d) => d.title === "第一幕 · 驗牌小劇場"));
+ok("夏瞳沒有驗牌小劇場", !(await docsOf(gx)).some((d) => d.title === "第一幕 · 驗牌小劇場"));
+await act(g, { action: "unlock", key: "FT-SCENE1", on: true });
+ok("開放後小劇場可讀", (await docsOf(gw)).some((d) => d.title === "第一幕 · 小劇場" && d.body));
+ok("玩家端劇本不含紙本翻頁提示", !(await docsOf(gw)).some((d) => (d.body ?? "").includes("請勿翻開")));
+
 done("線上主持測試");

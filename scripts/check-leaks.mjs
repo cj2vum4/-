@@ -47,7 +47,7 @@ const findings = [];
  * 這些字只出現在 content/online/ 的劇本內容裡，任何瀏覽器 chunk 都不該看到。
  * 與上面不同，這裡檢查全部 chunk——主持台也是瀏覽器，內容一樣只能經過 API 取得。
  */
-const ONLINE_CONTENT = ["雍九", "蒼語山", "昨日救贖", "UNLOCK-BOOK2", "sb_publishable_"];
+const ONLINE_CONTENT = ["雍九", "蒼語山", "昨日救贖", "UNLOCK-BOOK2", "廖向冬", "陸渺渺", "林音", "FT-ACT"];
 
 for (const name of files) {
   const path = join(CHUNK_DIR, name);
