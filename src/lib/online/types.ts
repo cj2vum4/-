@@ -64,6 +64,13 @@ export interface UnlockDef {
   title: string;
   group: string;
   desc: string;
+  /**
+   * 要在某個步驟單獨開放的段落（例如小劇場）：填遊戲階段名稱，
+   * 開放按鈕就放在主持台那個階段的卡片裡，而且不會被線索分頁的「全部開放」一起打開
+   */
+  phase?: string;
+  /** 開放時廣播提醒全體玩家翻到這一段。只有單一角色才有的段落不要設，免得劇透 */
+  announce?: boolean;
 }
 
 export interface HandbookSection {

@@ -161,4 +161,27 @@ check("玩家不能拿手冊板書", await fetchStatus(pic.replace("act6-1.jpg",
 check("玩家不能拿還沒開放的第七幕插圖", await fetchStatus(pic.replace("act6-1.jpg", "act7-1.jpg")), 401);
 check("網址換成別的角色就失效", await fetchStatus(pic.replace("who=xia-tong", "who=wang-zhiyu")), 401);
 
+console.log("\n[瘋兔子小劇場開放]");
+const k = (await call("", { method: "POST", body: { script: "fengtuz", pin: PIN } })).json.code;
+const kw = (await call(`/${k}/join`, { method: "POST", body: { roleId: "wang-zhiyu", nickname: "戊" } })).json.identity;
+const kx = (await call(`/${k}/join`, { method: "POST", body: { roleId: "xia-tong", nickname: "己" } })).json.identity;
+const kState = async (p) => (await call(`/${k}/state`, { headers: as(p) })).json.player;
+const kCat = (await call(`/${k}/catalog`, { headers: host })).json.catalog;
+ok("小劇場標在對應的階段", kCat.unlocks.filter((u) => u.phase === "第一幕").length === 2 && kCat.unlocks.filter((u) => u.phase === "第七幕").length === 5);
+await act(k, { action: "releaseGroup", group: "第一幕" });
+let kd = (await kState(kw)).docs;
+ok("「全部開放」會開本幕劇本", kd.some((d) => d.title.startsWith("第一幕 · 瘋兔子") && d.body));
+ok("「全部開放」不會開小劇場", kd.some((d) => d.title === "第一幕 · 小劇場" && d.body === null));
+ok("「全部開放」不會開王之喻的驗牌小劇場", kd.some((d) => d.title === "第一幕 · 驗牌小劇場" && d.body === null));
+const before = (await kState(kx)).broadcasts.length;
+await act(k, { action: "unlock", key: "FT-SCENE1", on: true });
+let kb = (await kState(kx)).broadcasts;
+ok("開放小劇場會通知玩家翻頁", kb.length === before + 1 && kb[0].message.includes("【第一幕 · 小劇場】"), kb[0]?.message);
+await act(k, { action: "unlock", key: "FT-SCENE1", on: true });
+check("重複按開放不會再通知一次", (await kState(kx)).broadcasts.length, before + 1);
+await act(k, { action: "unlock", key: "FT-SCENE1-WANG", on: true });
+check("王之喻的驗牌小劇場不廣播（免得劇透）", (await kState(kx)).broadcasts.length, before + 1);
+ok("王之喻開放後讀得到驗牌小劇場", (await kState(kw)).docs.some((d) => d.title === "第一幕 · 驗牌小劇場" && d.body));
+ok("其他角色仍然沒有驗牌小劇場", !(await kState(kx)).docs.some((d) => d.title === "第一幕 · 驗牌小劇場"));
+
 done("線上主持測試");

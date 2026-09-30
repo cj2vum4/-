@@ -283,7 +283,8 @@ export async function hostAction(code: string, a: HostAction): Promise<void> {
           if (clue.group !== a.group || clue.audience === "pick") continue;
           release(s, def, clue, "default");
         }
-        for (const u of def.unlocks) if (u.group === a.group) s.unlocks[u.key] = true;
+        // 要在特定步驟開的段落（小劇場）不跟著一起開，只能在流程分頁單獨開放
+        for (const u of def.unlocks) if (u.group === a.group && !u.phase) s.unlocks[u.key] = true;
         return;
       }
       case "revoke": {
@@ -294,11 +295,17 @@ export async function hostAction(code: string, a: HostAction): Promise<void> {
         return;
       }
       case "unlock": {
-        if (!def.unlocks.some((u) => u.key === a.key)) {
-          throw new GameError("BAD_REQUEST", "沒有這個解鎖項目");
+        const u = def.unlocks.find((x) => x.key === a.key);
+        if (!u) throw new GameError("BAD_REQUEST", "沒有這個解鎖項目");
+        if (a.on) {
+          // 只在「從關到開」時提醒一次，重複按不會洗版
+          if (u.announce && !s.unlocks[a.key]) {
+            systemBroadcast(s, `📖 主持人通知：【${u.title}】已開放，請翻到劇本的這一段。`);
+          }
+          s.unlocks[a.key] = true;
+        } else {
+          delete s.unlocks[a.key];
         }
-        if (a.on) s.unlocks[a.key] = true;
-        else delete s.unlocks[a.key];
         return;
       }
       case "broadcast": {
