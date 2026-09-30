@@ -14,6 +14,7 @@ import {
 } from "@/lib/online/client";
 import { metaForCode } from "@/lib/online/meta";
 import type { OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot } from "@/lib/online/types";
+import { RichText } from "../../rich-text";
 
 export function PlayerApp({ code }: { code: string }) {
   const meta = metaForCode(code);
@@ -120,6 +121,10 @@ function Lobby({ code, onJoined }: { code: string; onJoined: (id: OnlinePlayerId
               r.id === roleId ? "border-gold bg-gold/10" : "border-line bg-panel"
             }`}
           >
+            {r.image ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={r.image} alt={`${r.name} 角色海報`} loading="lazy" className="mb-2 aspect-[1017/1440] w-full rounded-md object-cover" />
+            ) : null}
             <span className="flex items-center justify-between gap-2">
               <span className="font-bold text-paper">{r.name}</span>
               {r.taken ? <span className="text-[11px] text-muted">已有人</span> : null}
@@ -301,7 +306,7 @@ function ScriptTab({ snap }: { snap: OnlinePlayerSnapshot }) {
           {current.body === null ? (
             <p className="py-8 text-center text-sm text-muted">🔒 等待主持人開放此段</p>
           ) : (
-            <p className="whitespace-pre-wrap text-[15px] leading-8 text-paper/95">{current.body}</p>
+            <RichText text={current.body} images={current.images} className="whitespace-pre-wrap text-[15px] leading-8 text-paper/95" />
           )}
         </article>
       ) : null}

@@ -142,4 +142,23 @@ await act(g, { action: "unlock", key: "FT-SCENE1", on: true });
 ok("開放後小劇場可讀", (await docsOf(gw)).some((d) => d.title === "第一幕 · 小劇場" && d.body));
 ok("玩家端劇本不含紙本翻頁提示", !(await docsOf(gw)).some((d) => (d.body ?? "").includes("請勿翻開")));
 
+console.log("\n[瘋兔子圖片：角色海報、劇本插圖、手冊板書]");
+const fetchStatus = async (url) => (await fetch(`${BASE}${url}`)).status;
+const poster = (await call(`/${g}/lobby`)).json.lobby.roles.find((r) => r.id === "xia-tong")?.image;
+ok("選角畫面有角色海報", Boolean(poster));
+check("拿得到角色海報", await fetchStatus(poster), 200);
+check("海報網址不能拿別的圖", await fetchStatus(poster.replace("xia-tong.jpg", "act6-1.jpg")), 401);
+ok("第六幕開放前劇本沒有插圖網址", !(await docsOf(gx)).some((d) => d.images));
+const boards = (await call(`/${g}/catalog`, { headers: host })).json.catalog.handbook.find((h) => h.images)?.images;
+ok("主持人手冊帶有板書圖網址", boards && Object.keys(boards).length > 0);
+check("主持人拿得到板書圖", await fetchStatus(Object.values(boards)[0]), 200);
+await act(g, { action: "phase", phase: 6 });
+const act6 = (await docsOf(gx)).find((d) => d.title.startsWith("第六幕"));
+ok("第六幕開放後帶有插圖網址", Boolean(act6?.images?.["act6-1.jpg"]) && act6.body.includes("[[img:act6-1.jpg]]"));
+const pic = act6.images["act6-1.jpg"];
+check("玩家拿得到已開放段落的插圖", await fetchStatus(pic), 200);
+check("玩家不能拿手冊板書", await fetchStatus(pic.replace("act6-1.jpg", "hb-act3-board.jpg")), 401);
+check("玩家不能拿還沒開放的第七幕插圖", await fetchStatus(pic.replace("act6-1.jpg", "act7-1.jpg")), 401);
+check("網址換成別的角色就失效", await fetchStatus(pic.replace("who=xia-tong", "who=wang-zhiyu")), 401);
+
 done("線上主持測試");

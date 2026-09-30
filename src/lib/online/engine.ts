@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { GameError } from "../errors";
-import { getScript, groupsOf, scriptForCode, type ScriptDef } from "./scripts";
+import { imageNames } from "./rich";
+import { getScript, groupsOf, scriptForCode, type DocDef, type ScriptDef } from "./scripts";
 import { getOnlineStore, type OnlineSession } from "./store";
 import type {
   Broadcast,
@@ -211,7 +212,7 @@ export async function hostCatalog(code: string): Promise<HostCatalog> {
       images: c.images.map((name) => assetUrl(code, "host", name)),
     })),
     templates: def.templates,
-    handbook: def.handbook,
+    handbook: def.handbook.map((h) => ({ ...h, images: signedImages(code, "host", h.note ?? "") })),
     clueSourceNote: note,
   };
 }
@@ -359,6 +360,7 @@ export async function lobby(code: string): Promise<OnlineLobby> {
       name: r.name,
       desc: r.desc,
       taken: Boolean(s.seats[r.id]),
+      ...(r.image ? { image: assetUrl(code, LOBBY, r.image) } : {}),
     })),
   };
 }
@@ -412,6 +414,12 @@ export async function assertPlayer(code: string, roleId: string, token: string) 
   return s;
 }
 
+/** 劇本段落對這個場次是否已開放（第二本之類的秘密段落，秘密鍵沒開也算沒開放） */
+function docOpen(s: OnlineSession, d: DocDef): boolean {
+  if (d.secretUntil && !s.unlocks[d.secretUntil]) return false;
+  return d.unlockAny.some((k) => s.unlocks[k]);
+}
+
 function visibleTo(s: OnlineSession, clueId: string, roleId: string): boolean {
   const to = s.released[clueId]?.to;
   if (to && (to.includes("all") || to.includes(roleId))) return true;
@@ -453,8 +461,12 @@ export async function playerSnapshot(
   const docs: PlayerDoc[] = [];
   for (const d of list) {
     if (d.secretUntil && !s.unlocks[d.secretUntil]) continue;
-    const open = d.unlockAny.some((k) => s.unlocks[k]);
-    docs.push({ id: d.id, book: d.book, title: d.title, body: open ? d.body : null });
+    if (!docOpen(s, d)) {
+      docs.push({ id: d.id, book: d.book, title: d.title, body: null });
+      continue;
+    }
+    const images = signedImages(code, roleId, d.body);
+    docs.push({ id: d.id, book: d.book, title: d.title, body: d.body, ...(images ? { images } : {}) });
   }
 
   return {
@@ -511,22 +523,52 @@ function assetUrl(code: string, who: string, name: string): string {
   return `/api/online/${code}/asset/${encodeURIComponent(name)}?${q}`;
 }
 
-/** 回傳可以讀取的圖片檔名；沒有權限則丟錯 */
+/** 選角畫面還沒有身分，用這個代號簽角色海報的網址 */
+const LOBBY = "lobby";
+
+/** 內文用到的圖片（[[img:…]] 標記）→ 已簽好的網址；沒有圖就不給這個欄位 */
+function signedImages(code: string, who: string, text: string): Record<string, string> | undefined {
+  const names = imageNames(text);
+  if (!names.length) return undefined;
+  return Object.fromEntries(names.map((n) => [n, assetUrl(code, who, n)]));
+}
+
+/** 圖檔放在 content/online/<劇本>/ 底下的哪個資料夾 */
+export type AssetDir = "cards" | "images" | "posters";
+
+/**
+ * 回傳可以讀取的圖片在哪個資料夾；沒有權限則丟錯。
+ *   線索卡圖（cards/）：主持人全部可看，玩家只能看已經發給自己的
+ *   手冊板書（images/）：只有主持人
+ *   劇本插圖（images/）：只有這個角色、而且那一段已經開放
+ *   角色海報（posters/）：選角畫面，拿到場次代碼就能看
+ */
 export async function authorizeAsset(
   code: string,
   who: string,
   sig: string,
   name: string,
-): Promise<{ script: OnlineScriptId }> {
+): Promise<{ script: OnlineScriptId; dir: AssetDir }> {
   if (!sig || !safeEqual(sign(code, who), sig)) {
     throw new GameError("UNAUTHORIZED", "圖片連結已失效，請重新整理");
   }
   const s = await load(code);
   const def = getScript(s.script);
+  const script = s.script;
+
+  if (who === LOBBY) {
+    if (def.roles.some((r) => r.image === name)) return { script, dir: "posters" };
+    throw new GameError("UNAUTHORIZED", "沒有這張圖");
+  }
+
   const all = await clueMap(def);
-  const ok = [...all.values()].some(
-    (c) => c.images.includes(name) && (who === "host" || visibleTo(s, c.id, who)),
-  );
-  if (!ok) throw new GameError("UNAUTHORIZED", "這張圖還沒發給你");
-  return { script: s.script };
+  if ([...all.values()].some((c) => c.images.includes(name) && (who === "host" || visibleTo(s, c.id, who)))) {
+    return { script, dir: "cards" };
+  }
+  if (who === "host") {
+    if (def.handbook.some((h) => imageNames(h.note ?? "").includes(name))) return { script, dir: "images" };
+  } else if (def.docsFor(who).list.some((d) => docOpen(s, d) && imageNames(d.body).includes(name))) {
+    return { script, dir: "images" };
+  }
+  throw new GameError("UNAUTHORIZED", "這張圖還沒發給你");
 }

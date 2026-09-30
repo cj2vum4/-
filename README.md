@@ -61,6 +61,9 @@ Supabase 表裡，玩家打開原始碼就能看完整本。現在劇本內容�
   天才在左、瘋兔子的線索、分幕人物劇本、卡圖都在這裡（瘋兔子已完全脫離 Supabase）。
   瘋兔子的內容由 `tools/online/build-fengtuz-content.py` 從人物劇本／DM 手冊的列印版 .docx 與線索卡掃描 PDF 產生；
   原始檔整理完已從 repo 移除，要重建時放回 `content/online/fengtuz/raw/` 再執行。
+  人工校對（OCR 錯字、漏行、原手冊誤植）寫在 `tools/online/fengtuz_fixes.py`，重建時自動套用，對不上會直接停下來；
+  臺詞卡、劇本插圖、手冊板書、角色海報的來源圖留在 `raw/extra/`。比對紀錄見 `content/online/fengtuz/AUDIT.md`。
+  劇本與手冊內文裡單獨一段的 `[[img:檔名|圖說]]` 會顯示成圖片（`images/`），角色海報在 `posters/`，都要驗過身分才給。
 - **場次狀態**：Google Sheet 的「線上場次」分頁，一場一列（JSON）。瘋兔子與天才在左可各用一份試算表：
   在 Render 設 `ONLINE_SHEET_FENGTUZ`、`ONLINE_SHEET_TIANCAI`（試算表網址 `/d/` 與 `/edit` 之間那串），
   並把服務帳號 email 加為該試算表的編輯者；沒設就與九爺共用。`/api/health` 的 `online` 欄位會顯示各自用哪一份。

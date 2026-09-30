@@ -3,32 +3,38 @@
   {
    "id": "xia-tong",
    "name": "夏瞳",
-   "desc": "男性角色"
+   "desc": "女性角色",
+   "image": "xia-tong.jpg"
   },
   {
    "id": "jian-feifei",
    "name": "簡菲菲",
-   "desc": "女性角色"
+   "desc": "女性角色",
+   "image": "jian-feifei.jpg"
   },
   {
    "id": "jiang-qin",
    "name": "姜沁",
-   "desc": "女性角色"
+   "desc": "女性角色",
+   "image": "jiang-qin.jpg"
   },
   {
    "id": "jian-ci",
    "name": "簡辭",
-   "desc": "男性角色"
+   "desc": "男性角色",
+   "image": "jian-ci.jpg"
   },
   {
    "id": "lin-yunshu",
    "name": "林雲書",
-   "desc": "男性角色"
+   "desc": "男性角色",
+   "image": "lin-yunshu.jpg"
   },
   {
    "id": "wang-zhiyu",
    "name": "王之喻",
-   "desc": "女性角色"
+   "desc": "男性角色",
+   "image": "wang-zhiyu.jpg"
   }
  ],
  "phases": [
@@ -118,7 +124,7 @@
    "key": "FT-SCENE1-WANG",
    "title": "第一幕 · 驗牌小劇場（王之喻）",
    "group": "第一幕",
-   "desc": "只有王之喻有這段，驗牌環節時開放"
+   "desc": "只有王之喻有這段。第一幕 Step6「我要驗牌」：其他五人都賭完、只剩王之喻時才開放（Step4 大家驗牌時不要開）"
   },
   {
    "key": "FT-ACT2",

@@ -13,6 +13,7 @@ import {
 } from "@/lib/online/client";
 import { metaForCode } from "@/lib/online/meta";
 import type { HostCatalog, HostClue, OnlineHostSnapshot } from "@/lib/online/types";
+import { RichText } from "../../rich-text";
 
 type Tab = "flow" | "clues" | "players" | "broadcast" | "book";
 
@@ -697,7 +698,7 @@ function BookTab({ catalog }: { catalog: HostCatalog }) {
         <details key={h.title} open={i === 0} className="rounded-xl border border-line bg-panel/80">
           <summary className="cursor-pointer px-4 py-3 text-sm font-bold tracking-[0.15em] text-gold/90">{h.title}</summary>
           <div className="border-t border-line/60 px-4 py-3">
-            {h.note ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-paper/85">{h.note}</p> : null}
+            {h.note ? <RichText text={h.note} images={h.images} className="whitespace-pre-wrap text-sm leading-relaxed text-paper/85" /> : null}
             {h.rows.length ? (
               <table className="mt-2 w-full text-left text-sm">
                 <tbody>

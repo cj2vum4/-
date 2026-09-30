@@ -14,6 +14,8 @@ export interface OnlineRole {
   desc: string;
   /** 選角建議，只有主持人看得到 */
   hint?: string;
+  /** 角色海報檔名（content/online/<劇本>/posters/），選角畫面顯示 */
+  image?: string;
 }
 
 export interface OnlinePhase {
@@ -66,8 +68,11 @@ export interface UnlockDef {
 
 export interface HandbookSection {
   title: string;
+  /** 內文；單獨一行的 [[img:檔名|圖說]] 會顯示成圖片（見 rich.ts） */
   note?: string;
   rows: string[][];
+  /** 伺服器回傳時才有：內文圖片檔名 → 已帶驗證參數的網址 */
+  images?: Record<string, string>;
 }
 
 export interface BroadcastTemplate {
@@ -138,8 +143,10 @@ export interface PlayerDoc {
   id: string;
   book: string;
   title: string;
-  /** null = 尚未開放，只給標題 */
+  /** null = 尚未開放，只給標題。單獨一段的 [[img:檔名]] 是插圖 */
   body: string | null;
+  /** 已開放段落裡的插圖：檔名 → 已帶驗證參數的網址 */
+  images?: Record<string, string>;
 }
 
 export interface OnlinePlayerSnapshot {
@@ -163,7 +170,8 @@ export interface OnlineLobby {
   script: OnlineScriptId;
   title: string;
   status: "active" | "ended";
-  roles: { id: string; name: string; desc: string; taken: boolean }[];
+  /** image：角色海報網址（已帶驗證參數），沒有海報的劇本不給 */
+  roles: { id: string; name: string; desc: string; taken: boolean; image?: string }[];
 }
 
 export interface OnlinePlayerIdentity {
