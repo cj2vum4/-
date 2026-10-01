@@ -12,8 +12,10 @@ import {
   saveIdentity,
   useOnlinePlayer,
 } from "@/lib/online/client";
+import { dateOfCode } from "@/lib/online/date-code";
 import { metaForCode } from "@/lib/online/meta";
-import type { OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot, PlayerClue, PlayerClueGroup } from "@/lib/online/types";
+import type { CircleOp, OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot, PlayerClue, PlayerClueGroup } from "@/lib/online/types";
+import { CircleBoard } from "../../circle";
 import { PlayerPokerTable } from "../../poker";
 import { RichText } from "../../rich-text";
 
@@ -64,7 +66,7 @@ function Lobby({ code, onJoined }: { code: string; onJoined: (id: OnlinePlayerId
   const [lobby, setLobby] = useState<OnlineLobby | null>(null);
   const [error, setError] = useState("");
   const [roleId, setRoleId] = useState(params.get("role") ?? "");
-  const [nickname, setNickname] = useState("");
+  const [nickname, setNickname] = useState(params.get("nickname") ?? "");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -104,7 +106,7 @@ function Lobby({ code, onJoined }: { code: string; onJoined: (id: OnlinePlayerId
   return (
     <PageShell>
       <BackLink href="/online/join" label="換一個場次" />
-      <p className="mt-4 text-xs tracking-[0.3em] text-muted">場次 {code}</p>
+      <p className="mt-4 text-xs tracking-[0.3em] text-muted">場次 {dateOfCode(code) ?? code}</p>
       <h1 className="mt-1 text-2xl font-bold text-gold-soft">{lobby?.title ?? "讀取中…"}</h1>
       {lobby?.status === "ended" ? (
         <p className="mt-2 text-sm text-vermilion-soft">這一場已經結束。原本的玩家可以用相同角色與暱稱回來看紀錄。</p>
@@ -342,23 +344,24 @@ function CluesTab({
   const [open, setOpen] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState<{ kind: "error" | "success"; text: string } | null>(null);
-  const [pokerBusy, setPokerBusy] = useState(false);
-  const [pokerError, setPokerError] = useState("");
+  const [widgetBusy, setWidgetBusy] = useState(false);
+  const [widgetError, setWidgetError] = useState("");
 
-  async function pokerOp(op: "shuffle" | "draw" | "stop") {
-    setPokerBusy(true);
-    setPokerError("");
+  // 撲克牌與法陣共用：送出操作、拿回新的畫面
+  async function widgetOp(path: "poker" | "circle", body: Record<string, unknown>) {
+    setWidgetBusy(true);
+    setWidgetError("");
     try {
-      const r = await onlineApi<{ player: OnlinePlayerSnapshot }>(`/${identity.code}/poker`, {
+      const r = await onlineApi<{ player: OnlinePlayerSnapshot }>(`/${identity.code}/${path}`, {
         method: "POST",
         player: identity,
-        body: JSON.stringify({ op }),
+        body: JSON.stringify(body),
       });
       onSnap(r.player);
     } catch (err) {
-      setPokerError(err instanceof ApiError ? err.message : "操作失敗");
+      setWidgetError(err instanceof ApiError ? err.message : "操作失敗");
     } finally {
-      setPokerBusy(false);
+      setWidgetBusy(false);
     }
   }
 
@@ -369,7 +372,7 @@ function CluesTab({
         <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left" onClick={() => setOpen(isOpen ? null : c.id)}>
           <span className="min-w-0">
             <span className="block font-bold text-paper">
-              {c.widget === "poker" ? "🃏" : "📄"} {c.title}
+              {c.widget === "poker" ? "🃏" : c.widget === "circle" ? "✡️" : "📄"} {c.title}
             </span>
             <span className="text-xs text-muted">{c.label}</span>
           </span>
@@ -387,8 +390,23 @@ function CluesTab({
             ) : null}
             {c.widget === "poker" && snap.poker ? (
               <>
-                <PlayerPokerTable poker={snap.poker} me={snap.role.id} busy={pokerBusy || snap.status === "ended"} onOp={pokerOp} />
-                {pokerError ? <p className="mt-2 text-xs text-vermilion-soft">{pokerError}</p> : null}
+                <PlayerPokerTable
+                  poker={snap.poker}
+                  me={snap.role.id}
+                  busy={widgetBusy || snap.status === "ended"}
+                  onOp={(op) => widgetOp("poker", { op })}
+                />
+                {widgetError ? <p className="mt-2 text-xs text-vermilion-soft">{widgetError}</p> : null}
+              </>
+            ) : c.widget === "circle" && snap.circle ? (
+              <>
+                {c.body ? <p className="mb-3 whitespace-pre-wrap text-sm leading-7 text-paper/95">{c.body}</p> : null}
+                <CircleBoard
+                  circle={snap.circle}
+                  busy={widgetBusy || snap.status === "ended"}
+                  onOp={(op: CircleOp) => widgetOp("circle", op)}
+                />
+                {widgetError ? <p className="mt-2 text-xs text-vermilion-soft">{widgetError}</p> : null}
               </>
             ) : c.body ? (
               <p className="whitespace-pre-wrap text-sm leading-7 text-paper/95">{c.body}</p>
@@ -517,14 +535,22 @@ function MeTab({ snap, onLeave }: { snap: OnlinePlayerSnapshot; onLeave: () => v
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-line bg-panel px-4 py-5 text-center">
+        {snap.role.image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={snap.role.image}
+            alt={`${snap.role.name} 角色海報`}
+            className="mx-auto mb-4 aspect-[1017/1440] w-full max-w-xs rounded-lg object-cover"
+          />
+        ) : null}
         <div className="text-2xl font-bold text-gold-soft">{snap.role.name}</div>
         <p className="mt-1 text-sm text-muted">{snap.role.desc}</p>
         {snap.hint ? <p className="mt-3 text-xs italic text-muted">{snap.hint}</p> : null}
         <p className="mt-4 text-sm text-paper">暱稱：{snap.nickname}</p>
-        <p className="mt-1 text-xs text-muted">場次 {snap.code}</p>
+        <p className="mt-1 text-xs text-muted">場次 {dateOfCode(snap.code) ?? snap.code}</p>
       </div>
       <p className="text-xs leading-relaxed text-muted">
-        換手機或清掉瀏覽器資料時，回到入場頁選同一個角色、輸入相同暱稱，就能拿回你的線索。
+        換手機或清掉瀏覽器資料時，回到入場頁輸入場次號碼 {dateOfCode(snap.code) ?? snap.code} 和暱稱「{snap.nickname}」，就能拿回你的角色與線索。
       </p>
       <Button
         variant="ghost"

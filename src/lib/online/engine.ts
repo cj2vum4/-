@@ -1,11 +1,16 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { GameError } from "../errors";
+import { codeForDate, parseDateKey, todayKey } from "./date-code";
+import { applyCircleOp, circleLog, circleNames, CircleError, dreamRows, emptyCircle } from "./circle";
 import { freshDeck, isCard, shuffled } from "./poker";
 import { imageNames } from "./rich";
-import { getScript, groupsOf, scriptForCode, type DocDef, type ScriptDef } from "./scripts";
+import { getScript, groupsOf, ONLINE_SCRIPT_IDS, scriptForCode, type DocDef, type ScriptDef } from "./scripts";
 import { getOnlineStore, type OnlineSession } from "./store";
 import type {
   Broadcast,
+  CircleOp,
+  CircleState,
+  CircleView,
   HostCatalog,
   HostClue,
   OnlineHostSnapshot,
@@ -68,8 +73,6 @@ const now = () => new Date().toISOString();
 
 // ---------------- 場次代碼 ----------------
 
-const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
 export function normalizeOnlineCode(raw: string): string {
   return decodeURIComponent(raw ?? "")
     .trim()
@@ -86,10 +89,12 @@ export function requireOnlineCode(raw: string): { code: string; script: OnlineSc
   return { code, script };
 }
 
-function generateCode(def: ScriptDef): string {
-  let suffix = "";
-  for (let i = 0; i < 6; i++) suffix += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
-  return def.codePrefix + suffix;
+/** 日期字串 → YYYYMMDD；沒給就是今天（台北時間） */
+function requireDateKey(date: string | undefined): string {
+  if (!date?.trim()) return todayKey();
+  const key = parseDateKey(date);
+  if (!key) throw new GameError("BAD_DATE", "日期格式不正確");
+  return key;
 }
 
 // ---------------- 讀寫 ----------------
@@ -130,18 +135,22 @@ function mutate<T>(code: string, fn: (s: OnlineSession) => T): Promise<T> {
 
 // ---------------- 主持人 ----------------
 
+/** 開場：場次代碼就是「劇本前綴＋日期」，一個劇本一天一場 */
 export async function createOnlineSession(
   script: OnlineScriptId,
   pin: string,
+  date?: string,
 ): Promise<string> {
   const p = (pin ?? "").trim();
   if (p.length < 4) throw new GameError("BAD_REQUEST", "主持密碼至少要 4 個字");
   const def = getScript(script);
   const store = getOnlineStore(script);
+  const code = codeForDate(def.codePrefix, requireDateKey(date));
 
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const code = generateCode(def);
-    if (cache.has(code) || (await store.get(code))) continue;
+  return withLock(code, async () => {
+    if (cache.has(code) || (await store.get(code))) {
+      throw new GameError("SESSION_EXISTS", "這一天已經開過這個劇本的場次，請用「回到進行中的場次」輸入日期和主持密碼");
+    }
     const t = now();
     const session: OnlineSession = {
       code,
@@ -157,13 +166,49 @@ export async function createOnlineSession(
       updatedAt: t,
       rev: 1,
     };
-    await withLock(code, async () => {
-      await store.save(session);
-      cache.set(code, session);
-    });
+    await store.save(session);
+    cache.set(code, session);
     return code;
+  });
+}
+
+/** 某一天各劇本的場次（沒開的不列） */
+async function sessionsOn(date: string): Promise<OnlineSession[]> {
+  const key = requireDateKey(date);
+  const found: OnlineSession[] = [];
+  for (const id of ONLINE_SCRIPT_IDS) {
+    try {
+      found.push(await load(codeForDate(getScript(id).codePrefix, key)));
+    } catch (err) {
+      if (!(err instanceof GameError && err.code === "SESSION_NOT_FOUND")) throw err;
+    }
   }
-  throw new GameError("SESSION_EXISTS", "產生場次代碼失敗，請再試一次");
+  return found;
+}
+
+/** 主持人用「日期＋劇本」找回場次代碼（密碼由呼叫端接著驗） */
+export function hostCodeFor(script: OnlineScriptId, date: string): string {
+  return codeForDate(getScript(script).codePrefix, requireDateKey(date));
+}
+
+/**
+ * 玩家用「日期＋暱稱」進場：暱稱對到某一場的座位就直接拿回身分；
+ * 對不到就回傳那天的場次，讓玩家第一次選角。
+ */
+export async function findByDate(
+  date: string,
+  nickname: string,
+): Promise<{ sessions: { code: string; script: OnlineScriptId; status: "active" | "ended" }[]; identity?: { code: string; roleId: string; token: string } }> {
+  const name = (nickname ?? "").trim();
+  const list = await sessionsOn(date);
+  if (!list.length) throw new GameError("SESSION_NOT_FOUND", "這一天沒有場次，請確認日期");
+  if (name) {
+    for (const s of list) {
+      const hit = Object.entries(s.seats).find(([, seat]) => sameName(seat.nickname, name));
+      if (hit) return { sessions: [], identity: { code: s.code, roleId: hit[0], token: hit[1].token } };
+    }
+  }
+  return { sessions: list.map((s) => ({ code: s.code, script: s.script, status: s.status })) };
 }
 
 export async function assertHost(code: string, pin: string): Promise<OnlineSession> {
@@ -180,7 +225,10 @@ function assertActive(s: OnlineSession) {
 
 export async function hostSnapshot(code: string): Promise<OnlineHostSnapshot> {
   const s = await load(code);
+  const def = getScript(s.script);
   const t = Date.now();
+  const all = await clueMap(def);
+  const clueGroups = def.foldPastClues ? clueGroupsFor(def, s, [...all.values()]) : undefined;
   return {
     rev: s.rev,
     code: s.code,
@@ -198,6 +246,8 @@ export async function hostSnapshot(code: string): Promise<OnlineHostSnapshot> {
       online: t - (lastSeen.get(`${code}:${roleId}`) ?? 0) < ONLINE_WINDOW_MS,
     })),
     poker: s.poker ?? null,
+    ...(widgetClueId(all, "circle") ? { circle: circleView(def, s.circle) } : {}),
+    ...(clueGroups ? { clueGroups } : {}),
   };
 }
 
@@ -245,7 +295,8 @@ export type HostAction =
   | { action: "broadcast"; message: string }
   | { action: "freeSeat"; roleId: string }
   | { action: "end" }
-  | ({ action: "poker" } & PokerHostOp);
+  | ({ action: "poker" } & PokerHostOp)
+  | ({ action: "circle" } & CircleOp);
 
 /** 主持人（陸江遠）對撲克牌局的操作 */
 export type PokerHostOp =
@@ -344,6 +395,10 @@ export async function hostAction(code: string, a: HostAction): Promise<void> {
       }
       case "poker": {
         hostPoker(s, def, a);
+        return;
+      }
+      case "circle": {
+        editCircle(s, def, a, HOST_NAME, true);
         return;
       }
       default:
@@ -457,9 +512,9 @@ function hostPoker(s: OnlineSession, def: ScriptDef, a: PokerHostOp) {
   }
 }
 
-/** 撲克牌線索（cards.json 裡 widget = poker 的那張） */
-function pokerClueId(all: Map<string, HostClue>): string | null {
-  for (const c of all.values()) if (c.widget === "poker") return c.id;
+/** 互動線索（cards.json 裡 widget = poker／circle 的那張） */
+function widgetClueId(all: Map<string, HostClue>, widget: NonNullable<HostClue["widget"]>): string | null {
+  for (const c of all.values()) if (c.widget === widget) return c.id;
   return null;
 }
 
@@ -492,7 +547,7 @@ export type PokerPlayerOp = "shuffle" | "draw" | "stop";
 export async function playerPoker(code: string, roleId: string, op: PokerPlayerOp): Promise<void> {
   const current = await load(code);
   const def = getScript(current.script);
-  const pokerId = pokerClueId(await clueMap(def));
+  const pokerId = widgetClueId(await clueMap(def), "poker");
   const name = def.roles.find((r) => r.id === roleId)?.name ?? roleId;
 
   await mutate(code, (s) => {
@@ -520,7 +575,37 @@ export async function playerPoker(code: string, roleId: string, op: PokerPlayerO
   });
 }
 
-/** 玩家線索分組：目前階段自動開的那一幕之前的分組算「前面幾幕」 */
+// ---------------- 飛昇法陣（瘋兔子第三～五幕） ----------------
+
+function circleView(def: ScriptDef, state: CircleState | undefined): CircleView {
+  return { ...(state ?? emptyCircle()), names: circleNames(def.roles), rows: dreamRows(def.roles) };
+}
+
+function editCircle(s: OnlineSession, def: ScriptDef, op: CircleOp, who: string, host: boolean) {
+  const c = (s.circle ??= emptyCircle());
+  try {
+    const action = applyCircleOp(c, op, { names: circleNames(def.roles), rows: dreamRows(def.roles), who, host });
+    circleLog(c, who, action, now());
+  } catch (err) {
+    if (err instanceof CircleError) throw new GameError("BAD_REQUEST", err.message);
+    throw err;
+  }
+}
+
+/** 玩家編輯法陣：拿到法陣線索的玩家都能改，主持人鎖定後就不能改 */
+export async function playerCircle(code: string, roleId: string, op: CircleOp): Promise<void> {
+  const current = await load(code);
+  const def = getScript(current.script);
+  const circleId = widgetClueId(await clueMap(def), "circle");
+  const name = def.roles.find((r) => r.id === roleId)?.name ?? roleId;
+  await mutate(code, (s) => {
+    assertActive(s);
+    if (!circleId || !visibleTo(s, circleId, roleId)) throw new GameError("UNAUTHORIZED", "法陣還沒發給你");
+    editCircle(s, def, op, name, false);
+  });
+}
+
+/** 線索分組（玩家端與主持台共用）：目前階段自動開的那一幕之前的分組算「前面幾幕」 */
 function clueGroupsFor(def: ScriptDef, s: OnlineSession, clues: HostClue[]): PlayerClueGroup[] | undefined {
   if (!def.foldPastClues) return undefined;
   const groups = groupsOf(def, clues);
@@ -528,7 +613,8 @@ function clueGroupsFor(def: ScriptDef, s: OnlineSession, clues: HostClue[]): Pla
   for (let i = 0; i <= s.phase; i++) {
     const key = def.phases[i]?.unlock;
     const group = key ? def.unlocks.find((u) => u.key === key)?.group : undefined;
-    if (group) current = group;
+    // 沒有線索的幕（第六幕）不算，維持在上一幕
+    if (group && groups.some((g) => g.id === group)) current = group;
   }
   const at = current ? groups.findIndex((g) => g.id === current) : -1;
   return groups.map((g, i) => ({ id: g.id, label: g.label, past: at >= 0 && i < at }));
@@ -595,6 +681,10 @@ export async function joinOnline(
   const def = getScript(existing.script);
   if (!def.roles.some((r) => r.id === roleId)) throw new GameError("BAD_REQUEST", "沒有這個角色");
 
+  const dup = (seats: OnlineSession["seats"]) =>
+    Object.entries(seats).some(([id, x]) => id !== roleId && sameName(x.nickname, name));
+  // 回場是用「日期＋暱稱」找人，同一場的暱稱不能重複
+  if (dup(existing.seats)) throw new GameError("NAME_TAKEN", "這個暱稱已經有人用了，請換一個");
   const seat = existing.seats[roleId];
   if (seat) {
     if (!sameName(seat.nickname, name)) {
@@ -606,6 +696,7 @@ export async function joinOnline(
 
   return mutate(code, (s) => {
     // 鎖內再檢查一次，兩個人同時搶同一個角色時只有一個會成功
+    if (dup(s.seats)) throw new GameError("NAME_TAKEN", "這個暱稱已經有人用了，請換一個");
     const again = s.seats[roleId];
     if (again) {
       if (sameName(again.nickname, name)) return { token: again.token };
@@ -689,7 +780,12 @@ export async function playerSnapshot(
     script: s.script,
     status: s.status,
     phaseName: def.phases[s.phase]?.name ?? "",
-    role: { id: role.id, name: role.name, desc: role.desc },
+    role: {
+      id: role.id,
+      name: role.name,
+      desc: role.desc,
+      ...(role.image ? { image: assetUrl(code, roleId, role.image) } : {}),
+    },
     nickname: seat?.nickname ?? "",
     hint,
     clues,
@@ -698,6 +794,7 @@ export async function playerSnapshot(
     selfUnlock: def.selfUnlock,
     ...(def.foldPastClues ? { clueGroups: clueGroupsFor(def, s, [...all.values()]) } : {}),
     ...(clues.some((c) => c.widget === "poker") ? { poker: playerPokerView(def, s.poker, roleId) } : {}),
+    ...(clues.some((c) => c.widget === "circle") ? { circle: circleView(def, s.circle) } : {}),
   };
 }
 
@@ -757,7 +854,7 @@ export type AssetDir = "cards" | "images" | "posters";
  *   線索卡圖（cards/）：主持人全部可看，玩家只能看已經發給自己的
  *   手冊板書（images/）：只有主持人
  *   劇本插圖（images/）：只有這個角色、而且那一段已經開放
- *   角色海報（posters/）：選角畫面，拿到場次代碼就能看
+ *   角色海報（posters/）：選角畫面，拿到場次代碼就能看；入場後玩家看自己角色的
  */
 export async function authorizeAsset(
   code: string,
@@ -776,6 +873,8 @@ export async function authorizeAsset(
     if (def.roles.some((r) => r.image === name)) return { script, dir: "posters" };
     throw new GameError("UNAUTHORIZED", "沒有這張圖");
   }
+
+  if (who !== "host" && def.roles.find((r) => r.id === who)?.image === name) return { script, dir: "posters" };
 
   const all = await clueMap(def);
   if ([...all.values()].some((c) => c.images.includes(name) && (who === "host" || visibleTo(s, c.id, who)))) {

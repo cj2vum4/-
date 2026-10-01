@@ -11,8 +11,10 @@ import {
   saveHostPin,
   useOnlineHost,
 } from "@/lib/online/client";
+import { dateOfCode } from "@/lib/online/date-code";
 import { metaForCode } from "@/lib/online/meta";
 import type { HostCatalog, HostClue, OnlineHostSnapshot, UnlockDef } from "@/lib/online/types";
+import { CircleBoard } from "../../circle";
 import { HostPokerPanel } from "../../poker";
 import { RichText } from "../../rich-text";
 
@@ -164,7 +166,7 @@ function Console({ code, pin, onLogout }: { code: string; pin: string; onLogout:
           backHref="/online"
           title={
             <>
-              <CodeStamp code={code} />
+              <CodeStamp code={dateOfCode(code) ?? code} />
               <span className="truncate">{catalog?.title ?? "主持台"}</span>
             </>
           }
@@ -245,8 +247,8 @@ function FlowTab({
       <Panel>
         <SectionTitle>場次</SectionTitle>
         <p className="text-sm text-muted">
-          請玩家打開 <span className="text-paper">/online/join</span> 並輸入代碼{" "}
-          <CodeStamp code={code} />，或到「玩家」分頁複製入場連結。
+          請玩家打開 <span className="text-paper">/online/join</span>，輸入場次號碼{" "}
+          <CodeStamp code={dateOfCode(code) ?? code} /> 和自己的暱稱，或到「玩家」分頁複製入場連結。玩家換手機或重新整理時，輸入同樣的號碼和暱稱就能回來；你回主持台則是輸入號碼和主持密碼。
         </p>
         {ended ? (
           <p className="mt-3 text-sm text-vermilion-soft">場次已結束，玩家仍可回來看已拿到的內容。</p>
@@ -300,10 +302,18 @@ function FlowTab({
                   )}
                 </div>
                 {stepUnlocks.has(p.name) ? (
-                  // 這一幕中途要手動開的段落（小劇場），按鈕直接放在階段卡片裡
+                  // 這一幕中途要手動開的段落（小劇場、故事覆盤），按鈕直接放在階段卡片裡
                   <ul className="mt-2.5 space-y-2 border-t border-line/60 pt-2.5">
                     {stepUnlocks.get(p.name)!.map((u) => (
-                      <UnlockRow key={u.key} unlock={u} label={u.title.split("·").pop()!.trim()} snap={snap} busy={busy || ended} act={act} enter />
+                      <UnlockRow
+                        key={u.key}
+                        unlock={u}
+                        label={u.title.split("·").pop()!.trim()}
+                        snap={snap}
+                        busy={busy || ended}
+                        act={act}
+                        enter={u.title.includes("小劇場")}
+                      />
                     ))}
                   </ul>
                 ) : null}
@@ -425,6 +435,66 @@ function CluesTab({
 
   const groups = catalog.groups.filter((g) => !group || g.id === group);
   let shown = 0;
+  // 依幕摺疊：本幕展開，前面與後面幾幕各收進一個摺疊區；搜尋或選了分類時全部攤開
+  const fold = snap.clueGroups && !query.trim() && !group ? snap.clueGroups : null;
+  const past = new Set(fold?.filter((g) => g.past).map((g) => g.id));
+  const current = fold?.find((g) => !g.past)?.id;
+
+  const section = (g: (typeof groups)[number], paged: boolean) => {
+    const items = filtered.filter((c) => c.group === g.id);
+    if (!items.length) return null;
+    const room = paged ? Math.max(0, limit - shown) : items.length;
+    const visible = items.slice(0, room);
+    if (paged) shown += visible.length;
+    if (!visible.length) return null;
+    const bulk =
+      items.some((c) => c.audience !== "pick") || catalog.unlocks.some((u) => u.group === g.id && !u.phase);
+    // 小劇場之類要在特定步驟開的段落不會跟著開，確認視窗講清楚
+    const steps = catalog.unlocks.filter((u) => u.group === g.id && u.phase);
+    return (
+      <section key={g.id}>
+        <SectionTitle
+          extra={
+            bulk ? (
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy || snap.status === "ended"}
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      `把「${g.label}」的線索全部依預設對象發出，並開放本幕劇本？` +
+                        (steps.length ? `\n\n${steps.map((u) => u.title).join("、")}不會一起開，請到「流程」分頁在對應步驟單獨開放。` : ""),
+                    )
+                  )
+                    void act({ action: "releaseGroup", group: g.id }, `已全部開放：${g.label}`);
+                }}
+              >
+                全部開放
+              </Button>
+            ) : null
+          }
+        >
+          {g.label}
+        </SectionTitle>
+        <div className="space-y-2">
+          {visible.map((c) => (
+            <ClueCard key={c.id} clue={c} snap={snap} catalog={catalog} busy={busy} act={act} />
+          ))}
+        </div>
+      </section>
+    );
+  };
+  const count = (ids: Set<string>) => filtered.filter((c) => ids.has(c.group)).length;
+  const foldBox = (label: string, list: typeof groups) =>
+    list.length && count(new Set(list.map((g) => g.id))) ? (
+      <details className="rounded-xl border border-line/70 bg-panel/50">
+        <summary className="cursor-pointer px-3.5 py-2.5 text-xs text-muted">
+          {label}（{count(new Set(list.map((g) => g.id)))}）：{list.map((g) => g.label).join("、")}
+        </summary>
+        <div className="space-y-4 border-t border-line/60 px-3 py-3">{list.map((g) => section(g, false))}</div>
+      </details>
+    ) : null;
 
   return (
     <div className="space-y-4">
@@ -466,56 +536,20 @@ function CluesTab({
         </select>
       </div>
       <p className="text-xs text-muted">
-        顯示 {Math.min(filtered.length, limit)} / {filtered.length} 筆（共 {catalog.clues.length} 筆線索）
+        顯示 {fold ? filtered.length : Math.min(filtered.length, limit)} / {filtered.length} 筆（共 {catalog.clues.length} 筆線索）
       </p>
 
-      {groups.map((g) => {
-        const items = filtered.filter((c) => c.group === g.id);
-        if (!items.length) return null;
-        const room = Math.max(0, limit - shown);
-        const visible = items.slice(0, room);
-        shown += visible.length;
-        if (!visible.length) return null;
-        const bulk =
-          items.some((c) => c.audience !== "pick") || catalog.unlocks.some((u) => u.group === g.id && !u.phase);
-        // 小劇場之類要在特定步驟開的段落不會跟著開，確認視窗講清楚
-        const steps = catalog.unlocks.filter((u) => u.group === g.id && u.phase);
-        return (
-          <section key={g.id}>
-            <SectionTitle
-              extra={
-                bulk ? (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy || snap.status === "ended"}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          `把「${g.label}」的線索全部依預設對象發出，並開放本幕劇本？` +
-                            (steps.length ? `\n\n${steps.map((u) => u.title).join("、")}不會一起開，請到「流程」分頁在對應步驟單獨開放。` : ""),
-                        )
-                      )
-                        void act({ action: "releaseGroup", group: g.id }, `已全部開放：${g.label}`);
-                    }}
-                  >
-                    全部開放
-                  </Button>
-                ) : null
-              }
-            >
-              {g.label}
-            </SectionTitle>
-            <div className="space-y-2">
-              {visible.map((c) => (
-                <ClueCard key={c.id} clue={c} snap={snap} catalog={catalog} busy={busy} act={act} />
-              ))}
-            </div>
-          </section>
-        );
-      })}
+      {fold ? (
+        <>
+          {groups.filter((g) => g.id === current).map((g) => section(g, false))}
+          {foldBox("後面幾幕的線索", groups.filter((g) => g.id !== current && !past.has(g.id)))}
+          {foldBox("前面幾幕的線索", groups.filter((g) => past.has(g.id)))}
+        </>
+      ) : (
+        groups.map((g) => section(g, true))
+      )}
 
-      {filtered.length > limit ? (
+      {!fold && filtered.length > limit ? (
         <Button variant="ghost" className="w-full" onClick={() => setLimit((l) => l + PAGE)}>
           顯示更多
         </Button>
@@ -590,6 +624,11 @@ function ClueCard({
             </div>
           ) : null}
           {clue.widget === "poker" ? <HostPokerPanel poker={snap.poker} roles={catalog.roles} busy={busy || ended} act={act} /> : null}
+          {clue.widget === "circle" && snap.circle ? (
+            <div className="rounded-lg border border-gold/30 bg-gold/5 p-3">
+              <CircleBoard circle={snap.circle} host busy={busy || ended} onOp={(op) => void act({ action: "circle", ...op })} />
+            </div>
+          ) : null}
         </div>
       ) : null}
 

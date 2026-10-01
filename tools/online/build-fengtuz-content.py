@@ -356,6 +356,16 @@ POKER_NOTE = (
     "④ 王之喻唸驗牌小劇場時，在新牌堆點一張牌「貼毒牌標記」——牌局作廢，玩家端改成公開棄牌堆與新牌堆（毒牌會標出來），接 Step7 牌局兇案。"
 )
 
+# 第三～五幕的飛昇法陣（線上版取代白板上的板書，大家一起填）
+CIRCLE_BODY = "以鮮血繪製的六角法陣。\n\n六芒星每個角寫一組「兇手→死者」，左邊的對照表寫每個人的「分身→夢主」。所有人看到的是同一張，誰都可以修改。"
+CIRCLE_NOTE = (
+    "第三幕 Step2 和飛昇儀式 09 一起發給全體。展開這張卡就是陣法，玩家和你都能改，改了幾秒內同步：\n"
+    "① 第三幕 Step3 覆盤夢主時，讓玩家填左邊「分身→夢主」；Step5 填六芒星六個角的兇手→死者。\n"
+    "② 喊「血肉苦楚，白日飛昇」前按「鎖定陣法」，玩家就不能再改。\n"
+    "③ 第四幕：解除鎖定，對照表「夏瞳」多填廖向冬、「其他分身」填廖向冬／簡辭，中央一格填夏→廖。\n"
+    "④ 第五幕 Step5 修正陣法：解除鎖定讓玩家修正，修完再鎖定、最後飛昇。"
+)
+
 # 第四幕恐搜：手冊沒寫、`第四幕·双搜.docx` 才有的 DM 須知（AUDIT 🟡8）
 SEARCH_NOTE = "下毒動作太明顯可以上前質疑，別讓他們太輕易得手；不需要 DM 死在玩家面前，讓玩家知道他們最終一定得手即可。"
 
@@ -379,6 +389,8 @@ def build_cards(hb):
         ("07", "觸發線索·新風系統", "第二幕", "all", "廖向冬回憶：\n（關鍵詞：新風系統）\n\n事後我又去了一趟駕駛室，我當時也懷疑新風系統出了什麼問題，它就在每間房靠近房門的牆壁上。但新風系統是好的，單向和雙向運行都正常。", ["07.jpg"], "觸發式。房內新風系統可單向排風，導致死者窒息、廖向冬打不開門；系統是好的，代表死者可以自己關掉排風。"),
         ("08", "觸發線索·門牌號", "第二幕", "all", "廖向冬回憶：\n（關鍵詞：門牌號）\n\n可能吧，但我不確定。因為我幾乎沒怎麼去過客房部，而且又有兩個人被殺了，加上我感覺我頭上的肉瘤開始吞噬我的理智了，沒注意到也是正常。", ["08.jpg"], "觸發式。強調廖向冬已經沒什麼理智了（調換門牌詭計）。"),
         ("09", "飛昇儀式", "第三幕", "all", after("①發放線索【飛昇儀式】09", 12).replace("飛昇儀式\n", "", 1), ["09.jpg"], ""),
+        # 線上版的板書：六芒星法陣與分身→夢主對照表（打開是共同編輯的陣法，見 src/app/online/circle.tsx）
+        ("circle", "飛昇法陣", "第三幕", "all", CIRCLE_BODY, [], CIRCLE_NOTE),
         ("10-11", "蒐證任務卡一（夏瞳＆林雲書）", "第四幕", ["xia-tong", "lin-yunshu"], task_intro + "\n\n" + after("（第一輪蒐證）", 9).split("\n", 6)[-1], ["10-11.jpg"],
          "林雲書扮演小廖、夏瞳扮演文琦。道具：桌子、光源、皮帶。他們要在皮帶上下毒；DM 本幕流程裡會主動碰皮帶，也會給他們下毒的時機。" + SEARCH_NOTE),
         ("12-13", "蒐證任務卡二（姜沁＆王之喻）", "第四幕", ["jiang-qin", "wang-zhiyu"], task_intro + "\n\n" + after("（第二輪蒐證）", 3), ["12-13.jpg"],
@@ -410,8 +422,8 @@ def build_cards(hb):
             clue["targets"] = who if isinstance(who, list) else [who]
         if note:
             clue["hostNote"] = note
-        if cid == "poker":
-            clue["widget"] = "poker"
+        if cid in ("poker", "circle"):
+            clue["widget"] = cid
         out.append(clue)
     return out
 
@@ -514,6 +526,40 @@ def build_handbook(hb):
     return sections
 
 
+def recap_doc(handbook):
+    """
+    故事覆盤：取手冊附件的世界觀與故事覆盤給玩家看，主持人在第七幕謝幕後開放。
+    前面給 DM 的叮嚀、最後的「結尾」與發行商的話不放；PDF 斷行接回段落。
+    開放前玩家端連標題都看不到（secretUntil），免得一開場就看到「故事覆盤」。
+    """
+    note = next(s["note"] for s in handbook if s["title"] == "DM 手冊・附件：故事覆盤")
+    note = note[note.index("【世界觀】") : note.index("整個劇本的劇情和發展邏輯")]
+    note = note.replace("（DM 角色故事）", "（廖向冬與陸江遠的故事）").replace("先說說DM 扮演的廖向冬", "先說說廖向冬")
+    # 標題行（【陸江遠】、一、故事梗概）自成一段；其餘行沒以句號類結尾就是 PDF 斷行，接到下一行
+    is_heading = lambda t: bool(re.fullmatch(r"(【[^】]+】)+|[一二三]、.{1,20}", t))
+    paras, cur = [], ""
+    for line in note.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        if cur and not is_heading(cur) and not is_heading(line) and not re.search(r"[。！？!?：…]$", cur):
+            cur += line
+            continue
+        if cur:
+            paras.append(cur)
+        cur = line
+    if cur:
+        paras.append(cur)
+    return {
+        "id": "ft-recap",
+        "book": "人物劇本",
+        "title": "故事覆盤",
+        "unlockAny": ["FT-RECAP"],
+        "secretUntil": "FT-RECAP",
+        "body": "\n\n".join(paras),
+    }
+
+
 # ---------------- 圖檔：劇本插圖、手冊板書、角色海報 ----------------
 
 POSTERS = {"xia-tong": "夏瞳", "jian-feifei": "简菲菲", "jiang-qin": "姜沁", "jian-ci": "简辞", "lin-yunshu": "林云书", "wang-zhiyu": "王之喻"}
@@ -537,12 +583,16 @@ def build_art():
 if __name__ == "__main__":
     hb = handbook_lines()
     docs = build_docs(slogans(hb))
-    (ROOT / "docs.json").write_text(json.dumps(docs, ensure_ascii=False, indent=1) + "\n", encoding="utf8")
     cards = build_cards(hb)
     (ROOT / "cards.json").write_text(json.dumps(cards, ensure_ascii=False, indent=1) + "\n", encoding="utf8")
     print(f"  線索：{len(cards)} 張")
     build_images()
-    (ROOT / "handbook.json").write_text(json.dumps(build_handbook(hb), ensure_ascii=False, indent=1) + "\n", encoding="utf8")
+    handbook = build_handbook(hb)
+    (ROOT / "handbook.json").write_text(json.dumps(handbook, ensure_ascii=False, indent=1) + "\n", encoding="utf8")
+    recap = recap_doc(handbook)
+    for d in docs.values():
+        d["list"].append(recap)
+    (ROOT / "docs.json").write_text(json.dumps(docs, ensure_ascii=False, indent=1) + "\n", encoding="utf8")
     build_art()
     (RAW / "build-review.txt").write_text("\n".join(review) + "\n", encoding="utf8")
     print(f"  人工核對清單：raw/build-review.txt（{len(review)} 筆）")
