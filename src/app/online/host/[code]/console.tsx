@@ -12,7 +12,9 @@ import {
   useOnlineHost,
 } from "@/lib/online/client";
 import { metaForCode } from "@/lib/online/meta";
-import type { HostCatalog, HostClue, OnlineHostSnapshot } from "@/lib/online/types";
+import type { HostCatalog, HostClue, OnlineHostSnapshot, UnlockDef } from "@/lib/online/types";
+import { HostPokerPanel } from "../../poker";
+import { RichText } from "../../rich-text";
 
 type Tab = "flow" | "clues" | "players" | "broadcast" | "book";
 
@@ -228,6 +230,16 @@ function FlowTab({
   act: Act;
 }) {
   const ended = snap.status === "ended";
+  // 劇本段落分三種：放在階段卡片裡的（小劇場）、切階段就自動開的（各幕）、其他要手動開的（信件、第二本）
+  const phaseNames = new Set(catalog.phases.map((p) => p.name));
+  const autoKeys = new Set(catalog.phases.map((p) => p.unlock).filter(Boolean));
+  const stepUnlocks = new Map<string, UnlockDef[]>();
+  for (const u of catalog.unlocks) {
+    if (u.phase && phaseNames.has(u.phase)) stepUnlocks.set(u.phase, [...(stepUnlocks.get(u.phase) ?? []), u]);
+  }
+  const rest = catalog.unlocks.filter((u) => !(u.phase && phaseNames.has(u.phase)));
+  const manual = rest.filter((u) => !autoKeys.has(u.key));
+  const automatic = rest.filter((u) => autoKeys.has(u.key));
   return (
     <div className="space-y-4">
       <Panel>
@@ -287,40 +299,93 @@ function FlowTab({
                     </Button>
                   )}
                 </div>
+                {stepUnlocks.has(p.name) ? (
+                  // 這一幕中途要手動開的段落（小劇場），按鈕直接放在階段卡片裡
+                  <ul className="mt-2.5 space-y-2 border-t border-line/60 pt-2.5">
+                    {stepUnlocks.get(p.name)!.map((u) => (
+                      <UnlockRow key={u.key} unlock={u} label={u.title.split("·").pop()!.trim()} snap={snap} busy={busy || ended} act={act} enter />
+                    ))}
+                  </ul>
+                ) : null}
               </li>
             );
           })}
         </ol>
       </div>
 
-      {catalog.unlocks.length ? (
+      {manual.length || automatic.length ? (
         <div>
           <SectionTitle>劇本開放</SectionTitle>
-          <p className="mb-2 text-xs text-muted">控制玩家端劇本各幕與信件是否可讀。第二本在「開放第二本劇本」之前，玩家端完全看不到。</p>
-          <ul className="space-y-2">
-            {catalog.unlocks.map((u) => {
-              const on = Boolean(snap.unlocks[u.key]);
-              return (
-                <li key={u.key} className="flex items-center justify-between gap-3 rounded-lg border border-line bg-panel px-3.5 py-2.5">
-                  <div className="min-w-0">
-                    <div className="text-sm text-paper">{u.title}</div>
-                    <div className="text-xs text-muted">{u.desc}</div>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant={on ? "jade" : "ghost"}
-                    disabled={busy || ended}
-                    onClick={() => act({ action: "unlock", key: u.key, on: !on }, on ? `已關閉：${u.title}` : `已開放：${u.title}`)}
-                  >
-                    {on ? "已開放" : "開放"}
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
+          {manual.length ? (
+            <>
+              <p className="mb-2 text-xs text-muted">控制玩家端劇本各幕與信件是否可讀。第二本在「開放第二本劇本」之前，玩家端完全看不到。</p>
+              <ul className="space-y-2">
+                {manual.map((u) => (
+                  <UnlockRow key={u.key} unlock={u} label={u.title} snap={snap} busy={busy || ended} act={act} boxed />
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {automatic.length ? (
+            <details className={`rounded-lg border border-line bg-panel/60 ${manual.length ? "mt-2" : ""}`}>
+              <summary className="cursor-pointer px-3.5 py-2.5 text-xs text-muted">
+                各幕劇本：切換階段時會自動開放，通常不用動（{automatic.filter((u) => snap.unlocks[u.key]).length}/{automatic.length} 已開放）
+              </summary>
+              <ul className="space-y-2 border-t border-line/60 px-3.5 py-2.5">
+                {automatic.map((u) => (
+                  <UnlockRow key={u.key} unlock={u} label={u.title} snap={snap} busy={busy || ended} act={act} />
+                ))}
+              </ul>
+            </details>
+          ) : null}
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 一個劇本段落的開放開關（再按一次會關上）。
+ * enter：階段卡片裡的小劇場，按鈕寫「進入小劇場」，比「開放」直覺
+ */
+function UnlockRow({
+  unlock: u,
+  label,
+  snap,
+  busy,
+  act,
+  boxed = false,
+  enter = false,
+}: {
+  unlock: UnlockDef;
+  label: string;
+  snap: OnlineHostSnapshot;
+  busy: boolean;
+  act: Act;
+  boxed?: boolean;
+  enter?: boolean;
+}) {
+  const on = Boolean(snap.unlocks[u.key]);
+  const off = enter ? `進入${label.replace(/（.*?）/g, "")}` : "開放";
+  return (
+    <li className={`flex items-center justify-between gap-3 ${boxed ? "rounded-lg border border-line bg-panel px-3.5 py-2.5" : ""}`}>
+      <div className="min-w-0">
+        <div className="text-sm text-paper">
+          {label}
+          {u.announce ? <span className="ml-1.5 text-[11px] text-muted">📖 開放時通知玩家翻頁</span> : null}
+        </div>
+        <div className="text-xs text-muted">{u.desc}</div>
+      </div>
+      <Button
+        size="sm"
+        variant={on ? "jade" : "ghost"}
+        className="shrink-0"
+        disabled={busy}
+        onClick={() => act({ action: "unlock", key: u.key, on: !on }, on ? `已關閉：${u.title}` : `已開放：${u.title}`)}
+      >
+        {on ? (enter ? "已進入" : "已開放") : off}
+      </Button>
+    </li>
   );
 }
 
@@ -412,7 +477,9 @@ function CluesTab({
         shown += visible.length;
         if (!visible.length) return null;
         const bulk =
-          items.some((c) => c.audience !== "pick") || catalog.unlocks.some((u) => u.group === g.id);
+          items.some((c) => c.audience !== "pick") || catalog.unlocks.some((u) => u.group === g.id && !u.phase);
+        // 小劇場之類要在特定步驟開的段落不會跟著開，確認視窗講清楚
+        const steps = catalog.unlocks.filter((u) => u.group === g.id && u.phase);
         return (
           <section key={g.id}>
             <SectionTitle
@@ -423,7 +490,12 @@ function CluesTab({
                     variant="ghost"
                     disabled={busy || snap.status === "ended"}
                     onClick={() => {
-                      if (window.confirm(`把「${g.label}」的線索全部依預設對象發出，並開放本幕劇本？`))
+                      if (
+                        window.confirm(
+                          `把「${g.label}」的線索全部依預設對象發出，並開放本幕劇本？` +
+                            (steps.length ? `\n\n${steps.map((u) => u.title).join("、")}不會一起開，請到「流程」分頁在對應步驟單獨開放。` : ""),
+                        )
+                      )
                         void act({ action: "releaseGroup", group: g.id }, `已全部開放：${g.label}`);
                     }}
                   >
@@ -517,6 +589,7 @@ function ClueCard({
               ))}
             </div>
           ) : null}
+          {clue.widget === "poker" ? <HostPokerPanel poker={snap.poker} roles={catalog.roles} busy={busy || ended} act={act} /> : null}
         </div>
       ) : null}
 
@@ -697,7 +770,7 @@ function BookTab({ catalog }: { catalog: HostCatalog }) {
         <details key={h.title} open={i === 0} className="rounded-xl border border-line bg-panel/80">
           <summary className="cursor-pointer px-4 py-3 text-sm font-bold tracking-[0.15em] text-gold/90">{h.title}</summary>
           <div className="border-t border-line/60 px-4 py-3">
-            {h.note ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-paper/85">{h.note}</p> : null}
+            {h.note ? <RichText text={h.note} images={h.images} className="whitespace-pre-wrap text-sm leading-relaxed text-paper/85" /> : null}
             {h.rows.length ? (
               <table className="mt-2 w-full text-left text-sm">
                 <tbody>

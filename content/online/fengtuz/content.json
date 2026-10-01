@@ -3,32 +3,38 @@
   {
    "id": "xia-tong",
    "name": "夏瞳",
-   "desc": "男性角色"
+   "desc": "女性角色",
+   "image": "xia-tong.jpg"
   },
   {
    "id": "jian-feifei",
    "name": "簡菲菲",
-   "desc": "女性角色"
+   "desc": "女性角色",
+   "image": "jian-feifei.jpg"
   },
   {
    "id": "jiang-qin",
    "name": "姜沁",
-   "desc": "女性角色"
+   "desc": "女性角色",
+   "image": "jiang-qin.jpg"
   },
   {
    "id": "jian-ci",
    "name": "簡辭",
-   "desc": "男性角色"
+   "desc": "男性角色",
+   "image": "jian-ci.jpg"
   },
   {
    "id": "lin-yunshu",
    "name": "林雲書",
-   "desc": "男性角色"
+   "desc": "男性角色",
+   "image": "lin-yunshu.jpg"
   },
   {
    "id": "wang-zhiyu",
    "name": "王之喻",
-   "desc": "女性角色"
+   "desc": "男性角色",
+   "image": "wang-zhiyu.jpg"
   }
  ],
  "phases": [
@@ -112,13 +118,16 @@
    "key": "FT-SCENE1",
    "title": "第一幕 · 小劇場",
    "group": "第一幕",
-   "desc": "第一幕 Step3，全員的宴會廳小劇場"
+   "desc": "Step3：本幕內容總結完、示意玩家翻頁時開放",
+   "phase": "第一幕",
+   "announce": true
   },
   {
    "key": "FT-SCENE1-WANG",
    "title": "第一幕 · 驗牌小劇場（王之喻）",
    "group": "第一幕",
-   "desc": "只有王之喻有這段，驗牌環節時開放"
+   "desc": "只有王之喻有這段（不會廣播）。Step6「我要驗牌」：其他五人都賭完、只剩王之喻時才開放，Step4 大家驗牌時不要開",
+   "phase": "第一幕"
   },
   {
    "key": "FT-ACT2",
@@ -160,31 +169,41 @@
    "key": "FT-S7-1",
    "title": "第七幕 · 小劇場 1",
    "group": "第七幕",
-   "desc": "主持人示意翻頁時開放"
+   "desc": "Step2：唸完過場「…不如先聽聽她們的想法」時開放；結束後發臺詞卡 22 給林雲書",
+   "phase": "第七幕",
+   "announce": true
   },
   {
    "key": "FT-S7-2",
    "title": "第七幕 · 小劇場 2",
    "group": "第七幕",
-   "desc": "主持人示意翻頁時開放"
+   "desc": "林雲書唸完臺詞卡 22、你唸完過場後開放；結束後發臺詞卡 23 給姜沁",
+   "phase": "第七幕",
+   "announce": true
   },
   {
    "key": "FT-S7-3",
    "title": "第七幕 · 小劇場 3",
    "group": "第七幕",
-   "desc": "主持人示意翻頁時開放"
+   "desc": "姜沁唸完臺詞卡 23、你唸完過場後開放；結束後發臺詞卡 24、25 給簡辭與王之喻",
+   "phase": "第七幕",
+   "announce": true
   },
   {
    "key": "FT-S7-4",
    "title": "第七幕 · 小劇場 4",
    "group": "第七幕",
-   "desc": "主持人示意翻頁時開放"
+   "desc": "簡辭、王之喻唸完臺詞卡、你唸完過場後開放；結束後發臺詞卡 26 給簡菲菲",
+   "phase": "第七幕",
+   "announce": true
   },
   {
    "key": "FT-S7-5",
    "title": "第七幕 · 小劇場 5",
    "group": "第七幕",
-   "desc": "主持人示意翻頁時開放"
+   "desc": "簡菲菲唸完臺詞卡 26、你唸完過場後開放；結束後發臺詞卡 27 給夏瞳",
+   "phase": "第七幕",
+   "announce": true
   }
  ],
  "groups": [
