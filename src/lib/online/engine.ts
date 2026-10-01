@@ -1,9 +1,10 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { GameError } from "../errors";
+import { codeForDate, parseDateKey, todayKey } from "./date-code";
 import { applyCircleOp, circleLog, circleNames, CircleError, dreamRows, emptyCircle } from "./circle";
 import { freshDeck, isCard, shuffled } from "./poker";
 import { imageNames } from "./rich";
-import { getScript, groupsOf, scriptForCode, type DocDef, type ScriptDef } from "./scripts";
+import { getScript, groupsOf, ONLINE_SCRIPT_IDS, scriptForCode, type DocDef, type ScriptDef } from "./scripts";
 import { getOnlineStore, type OnlineSession } from "./store";
 import type {
   Broadcast,
@@ -72,8 +73,6 @@ const now = () => new Date().toISOString();
 
 // ---------------- 場次代碼 ----------------
 
-const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
 export function normalizeOnlineCode(raw: string): string {
   return decodeURIComponent(raw ?? "")
     .trim()
@@ -90,10 +89,12 @@ export function requireOnlineCode(raw: string): { code: string; script: OnlineSc
   return { code, script };
 }
 
-function generateCode(def: ScriptDef): string {
-  let suffix = "";
-  for (let i = 0; i < 6; i++) suffix += CODE_ALPHABET[randomInt(CODE_ALPHABET.length)];
-  return def.codePrefix + suffix;
+/** 日期字串 → YYYYMMDD；沒給就是今天（台北時間） */
+function requireDateKey(date: string | undefined): string {
+  if (!date?.trim()) return todayKey();
+  const key = parseDateKey(date);
+  if (!key) throw new GameError("BAD_DATE", "日期格式不正確");
+  return key;
 }
 
 // ---------------- 讀寫 ----------------
@@ -134,18 +135,22 @@ function mutate<T>(code: string, fn: (s: OnlineSession) => T): Promise<T> {
 
 // ---------------- 主持人 ----------------
 
+/** 開場：場次代碼就是「劇本前綴＋日期」，一個劇本一天一場 */
 export async function createOnlineSession(
   script: OnlineScriptId,
   pin: string,
+  date?: string,
 ): Promise<string> {
   const p = (pin ?? "").trim();
   if (p.length < 4) throw new GameError("BAD_REQUEST", "主持密碼至少要 4 個字");
   const def = getScript(script);
   const store = getOnlineStore(script);
+  const code = codeForDate(def.codePrefix, requireDateKey(date));
 
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const code = generateCode(def);
-    if (cache.has(code) || (await store.get(code))) continue;
+  return withLock(code, async () => {
+    if (cache.has(code) || (await store.get(code))) {
+      throw new GameError("SESSION_EXISTS", "這一天已經開過這個劇本的場次，請用「回到進行中的場次」輸入日期和主持密碼");
+    }
     const t = now();
     const session: OnlineSession = {
       code,
@@ -161,13 +166,49 @@ export async function createOnlineSession(
       updatedAt: t,
       rev: 1,
     };
-    await withLock(code, async () => {
-      await store.save(session);
-      cache.set(code, session);
-    });
+    await store.save(session);
+    cache.set(code, session);
     return code;
+  });
+}
+
+/** 某一天各劇本的場次（沒開的不列） */
+async function sessionsOn(date: string): Promise<OnlineSession[]> {
+  const key = requireDateKey(date);
+  const found: OnlineSession[] = [];
+  for (const id of ONLINE_SCRIPT_IDS) {
+    try {
+      found.push(await load(codeForDate(getScript(id).codePrefix, key)));
+    } catch (err) {
+      if (!(err instanceof GameError && err.code === "SESSION_NOT_FOUND")) throw err;
+    }
   }
-  throw new GameError("SESSION_EXISTS", "產生場次代碼失敗，請再試一次");
+  return found;
+}
+
+/** 主持人用「日期＋劇本」找回場次代碼（密碼由呼叫端接著驗） */
+export function hostCodeFor(script: OnlineScriptId, date: string): string {
+  return codeForDate(getScript(script).codePrefix, requireDateKey(date));
+}
+
+/**
+ * 玩家用「日期＋暱稱」進場：暱稱對到某一場的座位就直接拿回身分；
+ * 對不到就回傳那天的場次，讓玩家第一次選角。
+ */
+export async function findByDate(
+  date: string,
+  nickname: string,
+): Promise<{ sessions: { code: string; script: OnlineScriptId; status: "active" | "ended" }[]; identity?: { code: string; roleId: string; token: string } }> {
+  const name = (nickname ?? "").trim();
+  const list = await sessionsOn(date);
+  if (!list.length) throw new GameError("SESSION_NOT_FOUND", "這一天沒有場次，請確認日期");
+  if (name) {
+    for (const s of list) {
+      const hit = Object.entries(s.seats).find(([, seat]) => sameName(seat.nickname, name));
+      if (hit) return { sessions: [], identity: { code: s.code, roleId: hit[0], token: hit[1].token } };
+    }
+  }
+  return { sessions: list.map((s) => ({ code: s.code, script: s.script, status: s.status })) };
 }
 
 export async function assertHost(code: string, pin: string): Promise<OnlineSession> {
@@ -640,6 +681,10 @@ export async function joinOnline(
   const def = getScript(existing.script);
   if (!def.roles.some((r) => r.id === roleId)) throw new GameError("BAD_REQUEST", "沒有這個角色");
 
+  const dup = (seats: OnlineSession["seats"]) =>
+    Object.entries(seats).some(([id, x]) => id !== roleId && sameName(x.nickname, name));
+  // 回場是用「日期＋暱稱」找人，同一場的暱稱不能重複
+  if (dup(existing.seats)) throw new GameError("NAME_TAKEN", "這個暱稱已經有人用了，請換一個");
   const seat = existing.seats[roleId];
   if (seat) {
     if (!sameName(seat.nickname, name)) {
@@ -651,6 +696,7 @@ export async function joinOnline(
 
   return mutate(code, (s) => {
     // 鎖內再檢查一次，兩個人同時搶同一個角色時只有一個會成功
+    if (dup(s.seats)) throw new GameError("NAME_TAKEN", "這個暱稱已經有人用了，請換一個");
     const again = s.seats[roleId];
     if (again) {
       if (sameName(again.nickname, name)) return { token: again.token };

@@ -12,6 +12,7 @@ import {
   saveIdentity,
   useOnlinePlayer,
 } from "@/lib/online/client";
+import { dateOfCode } from "@/lib/online/date-code";
 import { metaForCode } from "@/lib/online/meta";
 import type { CircleOp, OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot, PlayerClue, PlayerClueGroup } from "@/lib/online/types";
 import { CircleBoard } from "../../circle";
@@ -65,7 +66,7 @@ function Lobby({ code, onJoined }: { code: string; onJoined: (id: OnlinePlayerId
   const [lobby, setLobby] = useState<OnlineLobby | null>(null);
   const [error, setError] = useState("");
   const [roleId, setRoleId] = useState(params.get("role") ?? "");
-  const [nickname, setNickname] = useState("");
+  const [nickname, setNickname] = useState(params.get("nickname") ?? "");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -105,7 +106,7 @@ function Lobby({ code, onJoined }: { code: string; onJoined: (id: OnlinePlayerId
   return (
     <PageShell>
       <BackLink href="/online/join" label="換一個場次" />
-      <p className="mt-4 text-xs tracking-[0.3em] text-muted">場次 {code}</p>
+      <p className="mt-4 text-xs tracking-[0.3em] text-muted">場次 {dateOfCode(code) ?? code}</p>
       <h1 className="mt-1 text-2xl font-bold text-gold-soft">{lobby?.title ?? "讀取中…"}</h1>
       {lobby?.status === "ended" ? (
         <p className="mt-2 text-sm text-vermilion-soft">這一場已經結束。原本的玩家可以用相同角色與暱稱回來看紀錄。</p>
@@ -546,10 +547,10 @@ function MeTab({ snap, onLeave }: { snap: OnlinePlayerSnapshot; onLeave: () => v
         <p className="mt-1 text-sm text-muted">{snap.role.desc}</p>
         {snap.hint ? <p className="mt-3 text-xs italic text-muted">{snap.hint}</p> : null}
         <p className="mt-4 text-sm text-paper">暱稱：{snap.nickname}</p>
-        <p className="mt-1 text-xs text-muted">場次 {snap.code}</p>
+        <p className="mt-1 text-xs text-muted">場次 {dateOfCode(snap.code) ?? snap.code}</p>
       </div>
       <p className="text-xs leading-relaxed text-muted">
-        換手機或清掉瀏覽器資料時，回到入場頁選同一個角色、輸入相同暱稱，就能拿回你的線索。
+        換手機或清掉瀏覽器資料時，回到入場頁輸入場次號碼 {dateOfCode(snap.code) ?? snap.code} 和暱稱「{snap.nickname}」，就能拿回你的角色與線索。
       </p>
       <Button
         variant="ghost"

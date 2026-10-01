@@ -13,7 +13,7 @@ export default function OnlineHub() {
         <p className="text-sm tracking-[0.5em] text-gold/70">線 上 主 持</p>
         <h1 className="mt-4 text-3xl font-bold text-gold-soft">線索與劇本即時發放</h1>
         <p className="mt-3 text-sm text-muted">
-          主持人開場後，玩家用手機輸入場次代碼入場，只會收到發給自己的內容。
+          主持人開場後，玩家用手機輸入場次號碼（當天日期，例如 20261001）和暱稱入場，只會收到發給自己的內容。
         </p>
       </header>
 

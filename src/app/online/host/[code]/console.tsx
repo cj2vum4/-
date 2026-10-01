@@ -11,6 +11,7 @@ import {
   saveHostPin,
   useOnlineHost,
 } from "@/lib/online/client";
+import { dateOfCode } from "@/lib/online/date-code";
 import { metaForCode } from "@/lib/online/meta";
 import type { HostCatalog, HostClue, OnlineHostSnapshot, UnlockDef } from "@/lib/online/types";
 import { CircleBoard } from "../../circle";
@@ -165,7 +166,7 @@ function Console({ code, pin, onLogout }: { code: string; pin: string; onLogout:
           backHref="/online"
           title={
             <>
-              <CodeStamp code={code} />
+              <CodeStamp code={dateOfCode(code) ?? code} />
               <span className="truncate">{catalog?.title ?? "主持台"}</span>
             </>
           }
@@ -246,8 +247,8 @@ function FlowTab({
       <Panel>
         <SectionTitle>場次</SectionTitle>
         <p className="text-sm text-muted">
-          請玩家打開 <span className="text-paper">/online/join</span> 並輸入代碼{" "}
-          <CodeStamp code={code} />，或到「玩家」分頁複製入場連結。
+          請玩家打開 <span className="text-paper">/online/join</span>，輸入場次號碼{" "}
+          <CodeStamp code={dateOfCode(code) ?? code} /> 和自己的暱稱，或到「玩家」分頁複製入場連結。玩家換手機或重新整理時，輸入同樣的號碼和暱稱就能回來；你回主持台則是輸入號碼和主持密碼。
         </p>
         {ended ? (
           <p className="mt-3 text-sm text-vermilion-soft">場次已結束，玩家仍可回來看已拿到的內容。</p>

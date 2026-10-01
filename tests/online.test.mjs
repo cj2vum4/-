@@ -24,12 +24,25 @@ const PIN = "test-pin";
 const host = { "x-host-pin": PIN };
 const as = (p) => ({ "x-role-id": p.roleId, "x-player-token": p.token });
 const act = (code, body) => call(`/${code}/host`, { method: "POST", headers: host, body });
+// 場次代碼是「劇本前綴＋日期」、一個劇本一天一場；每個測試場次各用一個隨機日期，重跑也不會撞
+const usedDays = new Set();
+const randomDay = () => {
+  for (;;) {
+    const d = new Date(Date.UTC(2100 + Math.floor(Math.random() * 800), 0, 1 + Math.floor(Math.random() * 365)));
+    const s = d.toISOString().slice(0, 10);
+    if (!usedDays.has(s)) return usedDays.add(s), s;
+  }
+};
+const open = (script, date = randomDay()) => call("", { method: "POST", body: { script, pin: PIN, date } });
 const state = async (code, p) => (await call(`/${code}/state`, { headers: as(p) })).json.player;
 
 console.log("\n[天才在左我在右]");
-const created = await call("", { method: "POST", body: { script: "tiancai", pin: PIN } });
+const day = randomDay();
+const created = await open("tiancai", day);
 const code = created.json.code;
-ok("開場取得 TC- 代碼", /^TC-[A-Z0-9]{6}$/.test(code ?? ""), JSON.stringify(created.json));
+check("場次代碼是劇本前綴＋日期", code, `TC-${day.replace(/-/g, "")}`);
+check("同一天同劇本不能再開一場", (await open("tiancai", day)).status, 409);
+check("日期格式不對被擋", (await open("tiancai", "2026-02-30")).status, 400);
 check("密碼太短被擋", (await call("", { method: "POST", body: { script: "tiancai", pin: "1" } })).status, 400);
 check("錯誤主持密碼被擋", (await call(`/${code}/state`, { headers: { "x-host-pin": "wrong" } })).status, 401);
 check("匿名讀狀態被擋", (await call(`/${code}/state`)).status, 401);
@@ -51,6 +64,21 @@ check(
 );
 const again = await join("01", "阿明");
 check("同暱稱認回同一組憑證", again?.token, a.token);
+check(
+  "同一場的暱稱不能重複",
+  (await call(`/${code}/join`, { method: "POST", body: { roleId: "03", nickname: "阿明" } })).json.code,
+  "NAME_TAKEN",
+);
+const find = (date, nickname) => call("/find", { method: "POST", body: { date, nickname } });
+let found = (await find(day.replace(/-/g, "/"), " 阿明 ")).json;
+ok("日期＋暱稱直接拿回原本的角色與憑證", found.identity?.code === code && found.identity.roleId === "01" && found.identity.token === a.token);
+found = (await find(day.replace(/-/g, ""), "新來的")).json;
+ok("純數字號碼也找得到；新暱稱列出那天的場次去選角", !found.identity && found.sessions?.length === 1 && found.sessions[0].code === code);
+check("那天沒有場次", (await find(randomDay(), "阿明")).status, 404);
+await open("fengtuz", day);
+found = (await find(day, "新來的")).json;
+ok("同一天兩個劇本都有場次就兩個都列出來", found.sessions?.map((x) => x.script).sort().join() === "fengtuz,tiancai");
+check("用日期算出代碼、主持密碼回主持台", (await call(`/TC-${day.replace(/-/g, "")}/state`, { headers: host })).status, 200);
 check("假憑證被擋", (await call(`/${code}/state`, { headers: as({ roleId: "01", token: "x" }) })).status, 401);
 
 let sa = await state(code, a);
@@ -106,7 +134,7 @@ check("結束後新玩家不能入場", (await call(`/${code}/join`, { method: "
 ok("結束後原玩家仍可回來看", Boolean((await state(code, a))?.clues));
 
 console.log("\n[瘋兔子]（需以 ONLINE_FENGTUZ_MOCK=1 啟動伺服器）");
-const f = (await call("", { method: "POST", body: { script: "fengtuz", pin: PIN } })).json.code;
+const f = (await open("fengtuz")).json.code;
 ok("開場取得 RT- 代碼", /^RT-/.test(f ?? ""));
 const cat = (await call(`/${f}/catalog`, { headers: host })).json.catalog;
 ok("主持人拿到線索全集", cat?.clues.length > 0, JSON.stringify(cat).slice(0, 200));
@@ -127,7 +155,7 @@ await act(f, { action: "freeSeat", roleId: "jiang-qin" });
 check("釋出角色後舊憑證失效", (await call(`/${f}/state`, { headers: as(fq) })).status, 401);
 
 console.log("\n[瘋兔子人物劇本]");
-const g = (await call("", { method: "POST", body: { script: "fengtuz", pin: PIN } })).json.code;
+const g = (await open("fengtuz")).json.code;
 const gw = (await call(`/${g}/join`, { method: "POST", body: { roleId: "wang-zhiyu", nickname: "丙" } })).json.identity;
 const gx = (await call(`/${g}/join`, { method: "POST", body: { roleId: "xia-tong", nickname: "丁" } })).json.identity;
 const docsOf = async (p) => (await call(`/${g}/state`, { headers: as(p) })).json.player.docs;
@@ -166,7 +194,7 @@ check("玩家不能拿還沒開放的第七幕插圖", await fetchStatus(pic.rep
 check("網址換成別的角色就失效", await fetchStatus(pic.replace("who=xia-tong", "who=wang-zhiyu")), 401);
 
 console.log("\n[瘋兔子小劇場開放]");
-const k = (await call("", { method: "POST", body: { script: "fengtuz", pin: PIN } })).json.code;
+const k = (await open("fengtuz")).json.code;
 const kw = (await call(`/${k}/join`, { method: "POST", body: { roleId: "wang-zhiyu", nickname: "戊" } })).json.identity;
 const kx = (await call(`/${k}/join`, { method: "POST", body: { roleId: "xia-tong", nickname: "己" } })).json.identity;
 const kState = async (p) => (await call(`/${k}/state`, { headers: as(p) })).json.player;
@@ -189,7 +217,7 @@ ok("王之喻開放後讀得到驗牌小劇場", (await kState(kw)).docs.some((d
 ok("其他角色仍然沒有驗牌小劇場", !(await kState(kx)).docs.some((d) => d.title === "第一幕 · 驗牌小劇場"));
 
 console.log("\n[瘋兔子撲克牌]（假線索 900004 是撲克牌）");
-const pk = (await call("", { method: "POST", body: { script: "fengtuz", pin: PIN } })).json.code;
+const pk = (await open("fengtuz")).json.code;
 const pa = (await call(`/${pk}/join`, { method: "POST", body: { roleId: "wang-zhiyu", nickname: "庚" } })).json.identity;
 const pb = (await call(`/${pk}/join`, { method: "POST", body: { roleId: "lin-yunshu", nickname: "辛" } })).json.identity;
 const pc = (await call(`/${pk}/join`, { method: "POST", body: { roleId: "xia-tong", nickname: "壬" } })).json.identity;

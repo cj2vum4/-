@@ -4,29 +4,36 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { BackLink, Button, Field, Notice, PageShell, Panel, PanelTitle } from "@/components/ui";
 import { ApiError, onlineApi, saveHostPin } from "@/lib/online/client";
+import { codeForDate, parseDateKey, todayKey } from "@/lib/online/date-code";
 import { ONLINE_META } from "@/lib/online/meta";
+import { DateCodeField } from "../date-field";
 import type { OnlineScriptId } from "@/lib/online/types";
 
-/** 主持人入口：開新場次，或用代碼＋密碼回到進行中的場次 */
+/** 主持人入口：開新場次（場次就是當天日期），或用日期＋密碼回到進行中的場次 */
 export function HostEntry() {
   const router = useRouter();
   const params = useSearchParams();
   const initial = params.get("script");
   const [script, setScript] = useState<OnlineScriptId>(initial === "fengtuz" ? "fengtuz" : "tiancai");
   const [pin, setPin] = useState("");
-  const [code, setCode] = useState("");
+  const [date, setDate] = useState(todayKey());
+  const [resumeDate, setResumeDate] = useState(todayKey());
   const [resumePin, setResumePin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const meta = ONLINE_META[script];
 
   async function create() {
+    if (date.length !== 8 || !parseDateKey(date)) {
+      setError("場次號碼是 8 位數字的日期，例如 20261001");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
       const r = await onlineApi<{ code: string }>("", {
         method: "POST",
-        body: JSON.stringify({ script, pin }),
+        body: JSON.stringify({ script, pin, date }),
       });
       saveHostPin(r.code, pin);
       router.push(`/online/host/${r.code}`);
@@ -37,7 +44,12 @@ export function HostEntry() {
   }
 
   async function resume() {
-    const c = code.trim().toUpperCase();
+    const key = resumeDate.length === 8 ? parseDateKey(resumeDate) : null;
+    if (!key) {
+      setError("場次號碼是 8 位數字的日期，例如 20261001");
+      return;
+    }
+    const c = codeForDate(meta.prefix, key);
     setBusy(true);
     setError("");
     try {
@@ -45,7 +57,13 @@ export function HostEntry() {
       saveHostPin(c, resumePin);
       router.push(`/online/host/${c}`);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "無法進入場次");
+      setError(
+        err instanceof ApiError && err.code === "SESSION_NOT_FOUND"
+          ? `${resumeDate} 沒有開《${meta.title}》的場次`
+          : err instanceof ApiError
+            ? err.message
+            : "無法進入場次",
+      );
       setBusy(false);
     }
   }
@@ -81,6 +99,7 @@ export function HostEntry() {
         <Panel className="mt-5">
           <PanelTitle>開新場次</PanelTitle>
           <div className="space-y-3">
+            <DateCodeField value={date} onChange={setDate} />
             <Field
               label="主持密碼"
               hint="自己設一組（至少 4 個字），換裝置回到主持台時要用。不用告訴玩家。"
@@ -88,7 +107,7 @@ export function HostEntry() {
               onChange={(e) => setPin(e.target.value)}
               autoComplete="off"
             />
-            <Button className="w-full" disabled={busy || pin.trim().length < 4} onClick={create}>
+            <Button className="w-full" disabled={busy || date.length !== 8 || pin.trim().length < 4} onClick={create}>
               開啟《{meta.title}》場次
             </Button>
           </div>
@@ -97,21 +116,14 @@ export function HostEntry() {
         <Panel className="mt-4">
           <PanelTitle>回到進行中的場次</PanelTitle>
           <div className="space-y-3">
-            <Field
-              label="場次代碼"
-              placeholder="例如 TC-7K2M9Q"
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              autoCapitalize="characters"
-              autoComplete="off"
-            />
+            <DateCodeField value={resumeDate} onChange={setResumeDate} />
             <Field
               label="主持密碼"
               value={resumePin}
               onChange={(e) => setResumePin(e.target.value)}
               autoComplete="off"
             />
-            <Button variant="ghost" className="w-full" disabled={busy || !code || !resumePin} onClick={resume}>
+            <Button variant="ghost" className="w-full" disabled={busy || resumeDate.length !== 8 || !resumePin} onClick={resume}>
               回到主持台
             </Button>
           </div>
