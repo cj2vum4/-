@@ -1,6 +1,6 @@
 import { google, type sheets_v4 } from "googleapis";
 import { buildAuth, sheetsConfigured, withRetry } from "../store/sheets";
-import type { Broadcast, OnlineScriptId, PokerState, Release } from "./types";
+import type { Broadcast, CircleState, OnlineScriptId, PokerState, Release } from "./types";
 
 /**
  * 線上主持的場次狀態，整場存成一個 JSON。
@@ -30,6 +30,8 @@ export interface OnlineSession {
   seats: Record<string, OnlineSeat>;
   /** 撲克牌局（瘋兔子第一幕）；第一次操作時才建立 */
   poker?: PokerState;
+  /** 飛昇法陣（瘋兔子第三～五幕）；第一次編輯時才建立 */
+  circle?: CircleState;
   createdAt: string;
   updatedAt: string;
   rev: number;

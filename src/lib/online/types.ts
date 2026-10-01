@@ -52,8 +52,8 @@ export interface HostClue {
   images: string[];
   hostNote?: string;
   pageNum?: number;
-  /** 打開後不是文字而是互動元件：poker = 第一幕的撲克牌比大小 */
-  widget?: "poker";
+  /** 打開後不是文字而是互動元件：poker = 第一幕的撲克牌比大小、circle = 第三～五幕的飛昇法陣 */
+  widget?: "poker" | "circle";
 }
 
 export interface ClueGroup {
@@ -138,6 +138,10 @@ export interface OnlineHostSnapshot {
   seats: HostSeat[];
   /** 撲克牌局（還沒動過就是 null，主持台顯示一副新牌） */
   poker: PokerState | null;
+  /** 飛昇法陣（還沒人動過就是 null，主持台顯示空白陣法）；只有有法陣線索的劇本才有這個欄位 */
+  circle?: CircleView | null;
+  /** 有這個欄位的劇本，線索分頁依幕摺疊：本幕展開，前面與後面幾幕收起來 */
+  clueGroups?: PlayerClueGroup[];
 }
 
 /**
@@ -159,6 +163,38 @@ export interface PokerRound {
   /** 已翻牌比點 */
   revealed: boolean;
 }
+
+/** 飛昇法陣的一組「兇手→死者」；值是名字 id（角色 id 或 liao），空字串是還沒填 */
+export interface CirclePair {
+  killer: string;
+  victim: string;
+}
+
+export interface CircleState {
+  /** 六芒星六個角，順時針從頂端開始 */
+  star: CirclePair[];
+  /** 中央（第四幕板書加上的「夏→廖」） */
+  center: CirclePair;
+  /** 分身→夢主 對照表：key 是角色 id 或 others（其他分身），夢主最多兩個 */
+  dreams: Record<string, string[]>;
+  /** 主持人鎖定後玩家不能改（喊「白日飛昇」時） */
+  locked: boolean;
+  /** 每一格最後是誰改的（s0–s5、center、d:<列>） */
+  by: Record<string, string>;
+  log: PokerLogEntry[];
+}
+
+/** 給畫面用：陣法加上可選的名字與對照表的列 */
+export interface CircleView extends CircleState {
+  names: { id: string; name: string; short: string }[];
+  rows: string[];
+}
+
+export type CircleOp =
+  | { op: "pair"; slot: string; field: "killer" | "victim"; value: string }
+  | { op: "dream"; row: string; value: string[] }
+  | { op: "lock"; on: boolean }
+  | { op: "clear" };
 
 export interface PokerLogEntry {
   who: string;
@@ -200,7 +236,7 @@ export interface PlayerClue {
   /** 已經帶好驗證參數的圖片網址 */
   images: string[];
   at: string;
-  widget?: "poker";
+  widget?: "poker" | "circle";
 }
 
 /** 玩家線索清單的分組；past = 已經是前面幾幕，預設收起來 */
@@ -226,7 +262,8 @@ export interface OnlinePlayerSnapshot {
   script: OnlineScriptId;
   status: "active" | "ended";
   phaseName: string;
-  role: { id: string; name: string; desc: string };
+  /** image：自己角色的海報網址（已帶驗證參數），沒有海報的劇本不給 */
+  role: { id: string; name: string; desc: string; image?: string };
   nickname: string;
   hint: string;
   clues: PlayerClue[];
@@ -237,6 +274,8 @@ export interface OnlinePlayerSnapshot {
   clueGroups?: PlayerClueGroup[];
   /** 撲克牌線索發給這個玩家之後才有 */
   poker?: PlayerPoker;
+  /** 飛昇法陣線索發給這個玩家之後才有 */
+  circle?: CircleView;
 }
 
 /** 玩家選角畫面用：角色公開資訊與是否已被選走 */

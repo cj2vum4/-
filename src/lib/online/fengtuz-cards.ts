@@ -4,7 +4,7 @@ import type { HostClue } from "./types";
 
 /**
  * 瘋兔子的線索：content/online/fengtuz/cards.json（27 張線索卡，文字取自 DM 手冊，
- * 圖片在同目錄的 cards/；另有一副 widget = poker 的撲克牌，打開就是第一幕的牌桌）。
+ * 圖片在同目錄的 cards/；另有 widget = poker 的撲克牌（第一幕的牌桌）與 widget = circle 的飛昇法陣（共同編輯）。
  * 由 tools/online/build-fengtuz-content.py 產生，已完全脫離 Supabase。
  *
  * ONLINE_FENGTUZ_MOCK=1 時改用內建的三筆假線索（自動測試用，內容固定才好斷言）。
@@ -15,6 +15,7 @@ const MOCK: HostClue[] = [
   { id: "900002", title: "病歷記錄", group: "觸發線索", label: "觸發線索", audience: "pick", summary: "", body: "林雲書曾在醫院留下記錄。", images: [] },
   { id: "900003", title: "飛昇儀式", group: "結局", label: "結局", audience: "pick", summary: "", body: "儀式開始後，請簡菲菲說出最後的選擇。", images: [] },
   { id: "900004", title: "撲克牌", group: "第一幕", label: "第一幕", audience: "all", summary: "", body: "一副撲克牌。", images: [], widget: "poker" },
+  { id: "900005", title: "飛昇法陣", group: "第三幕", label: "第三幕", audience: "pick", summary: "", body: "六角法陣。", images: [], widget: "circle" },
 ];
 
 const FILE = join(process.cwd(), "content", "online", "fengtuz", "cards.json");

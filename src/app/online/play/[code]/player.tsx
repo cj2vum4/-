@@ -13,7 +13,8 @@ import {
   useOnlinePlayer,
 } from "@/lib/online/client";
 import { metaForCode } from "@/lib/online/meta";
-import type { OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot, PlayerClue, PlayerClueGroup } from "@/lib/online/types";
+import type { CircleOp, OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot, PlayerClue, PlayerClueGroup } from "@/lib/online/types";
+import { CircleBoard } from "../../circle";
 import { PlayerPokerTable } from "../../poker";
 import { RichText } from "../../rich-text";
 
@@ -342,23 +343,24 @@ function CluesTab({
   const [open, setOpen] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState<{ kind: "error" | "success"; text: string } | null>(null);
-  const [pokerBusy, setPokerBusy] = useState(false);
-  const [pokerError, setPokerError] = useState("");
+  const [widgetBusy, setWidgetBusy] = useState(false);
+  const [widgetError, setWidgetError] = useState("");
 
-  async function pokerOp(op: "shuffle" | "draw" | "stop") {
-    setPokerBusy(true);
-    setPokerError("");
+  // 撲克牌與法陣共用：送出操作、拿回新的畫面
+  async function widgetOp(path: "poker" | "circle", body: Record<string, unknown>) {
+    setWidgetBusy(true);
+    setWidgetError("");
     try {
-      const r = await onlineApi<{ player: OnlinePlayerSnapshot }>(`/${identity.code}/poker`, {
+      const r = await onlineApi<{ player: OnlinePlayerSnapshot }>(`/${identity.code}/${path}`, {
         method: "POST",
         player: identity,
-        body: JSON.stringify({ op }),
+        body: JSON.stringify(body),
       });
       onSnap(r.player);
     } catch (err) {
-      setPokerError(err instanceof ApiError ? err.message : "操作失敗");
+      setWidgetError(err instanceof ApiError ? err.message : "操作失敗");
     } finally {
-      setPokerBusy(false);
+      setWidgetBusy(false);
     }
   }
 
@@ -369,7 +371,7 @@ function CluesTab({
         <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left" onClick={() => setOpen(isOpen ? null : c.id)}>
           <span className="min-w-0">
             <span className="block font-bold text-paper">
-              {c.widget === "poker" ? "🃏" : "📄"} {c.title}
+              {c.widget === "poker" ? "🃏" : c.widget === "circle" ? "✡️" : "📄"} {c.title}
             </span>
             <span className="text-xs text-muted">{c.label}</span>
           </span>
@@ -387,8 +389,23 @@ function CluesTab({
             ) : null}
             {c.widget === "poker" && snap.poker ? (
               <>
-                <PlayerPokerTable poker={snap.poker} me={snap.role.id} busy={pokerBusy || snap.status === "ended"} onOp={pokerOp} />
-                {pokerError ? <p className="mt-2 text-xs text-vermilion-soft">{pokerError}</p> : null}
+                <PlayerPokerTable
+                  poker={snap.poker}
+                  me={snap.role.id}
+                  busy={widgetBusy || snap.status === "ended"}
+                  onOp={(op) => widgetOp("poker", { op })}
+                />
+                {widgetError ? <p className="mt-2 text-xs text-vermilion-soft">{widgetError}</p> : null}
+              </>
+            ) : c.widget === "circle" && snap.circle ? (
+              <>
+                {c.body ? <p className="mb-3 whitespace-pre-wrap text-sm leading-7 text-paper/95">{c.body}</p> : null}
+                <CircleBoard
+                  circle={snap.circle}
+                  busy={widgetBusy || snap.status === "ended"}
+                  onOp={(op: CircleOp) => widgetOp("circle", op)}
+                />
+                {widgetError ? <p className="mt-2 text-xs text-vermilion-soft">{widgetError}</p> : null}
               </>
             ) : c.body ? (
               <p className="whitespace-pre-wrap text-sm leading-7 text-paper/95">{c.body}</p>
@@ -517,6 +534,14 @@ function MeTab({ snap, onLeave }: { snap: OnlinePlayerSnapshot; onLeave: () => v
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-line bg-panel px-4 py-5 text-center">
+        {snap.role.image ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={snap.role.image}
+            alt={`${snap.role.name} 角色海報`}
+            className="mx-auto mb-4 aspect-[1017/1440] w-full max-w-xs rounded-lg object-cover"
+          />
+        ) : null}
         <div className="text-2xl font-bold text-gold-soft">{snap.role.name}</div>
         <p className="mt-1 text-sm text-muted">{snap.role.desc}</p>
         {snap.hint ? <p className="mt-3 text-xs italic text-muted">{snap.hint}</p> : null}
