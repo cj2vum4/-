@@ -48,6 +48,8 @@ export interface ScriptDef {
   announcePhase: boolean;
   /** 玩家能否輸入線索代碼自行解鎖（主持人口頭給代碼的玩法） */
   selfUnlock: boolean;
+  /** 玩家端線索依幕分組，進入下一幕後前面幾幕的線索收起來 */
+  foldPastClues: boolean;
   loadClues(): Promise<{ clues: HostClue[]; note?: string }>;
   docsFor(roleId: string): { hint: string; list: DocDef[] };
 }
@@ -98,6 +100,8 @@ function buildTiancai(): ScriptDef {
     handbook: c.handbook,
     announcePhase: true,
     selfUnlock: true,
+    // 角色卡在開場分組，整場都要用，不收
+    foldPastClues: false,
     async loadClues() {
       return { clues: c.clues };
     },
@@ -124,6 +128,7 @@ function buildFengtuz(): ScriptDef {
     handbook: [...c.handbook, ...dmHandbook],
     announcePhase: true,
     selfUnlock: false,
+    foldPastClues: true,
     loadClues: loadFengtuzClues,
     docsFor(roleId) {
       return docs[roleId] ?? { hint: "", list: [] };

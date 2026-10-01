@@ -52,6 +52,8 @@ export interface HostClue {
   images: string[];
   hostNote?: string;
   pageNum?: number;
+  /** 打開後不是文字而是互動元件：poker = 第一幕的撲克牌比大小 */
+  widget?: "poker";
 }
 
 export interface ClueGroup {
@@ -134,16 +136,78 @@ export interface OnlineHostSnapshot {
   unlocks: Record<string, boolean>;
   broadcasts: Broadcast[];
   seats: HostSeat[];
+  /** 撲克牌局（還沒動過就是 null，主持台顯示一副新牌） */
+  poker: PokerState | null;
+}
+
+/**
+ * 撲克牌局的三個狀態：
+ *   inspect 驗牌：大家看得到整副牌的牌面，可以洗牌
+ *   deal    發牌：牌面蓋起來，主持人（陸江遠）和玩家一對一比大小
+ *   reveal  毒牌標記之後：玩家端改成公開棄牌堆與新牌堆
+ */
+export type PokerMode = "inspect" | "deal" | "reveal";
+
+export interface PokerRound {
+  roleId: string;
+  /** 玩家的牌，第一張是起始牌（蓋著，只有自己看得到） */
+  player: string[];
+  /** 主持人（陸江遠）的牌，第一張是起始牌 */
+  dealer: string[];
+  playerStop: boolean;
+  dealerStop: boolean;
+  /** 已翻牌比點 */
+  revealed: boolean;
+}
+
+export interface PokerLogEntry {
+  who: string;
+  action: string;
+  at: string;
+}
+
+export interface PokerState {
+  mode: PokerMode;
+  /** 新牌堆（還沒發的牌），第一張是牌堆頂 */
+  deck: string[];
+  /** 棄牌堆 */
+  discard: string[];
+  round: PokerRound | null;
+  /** 被做了毒牌標記的那張牌 */
+  poison: string | null;
+  log: PokerLogEntry[];
+}
+
+/** 玩家看到的牌局：看不到牌面的牌是 null */
+export interface PlayerPoker {
+  mode: PokerMode;
+  deck: (string | null)[];
+  discard: (string | null)[];
+  round:
+    | (Omit<PokerRound, "player" | "dealer"> & { roleName: string; player: (string | null)[]; dealer: (string | null)[] })
+    | null;
+  poison: string | null;
+  log: PokerLogEntry[];
 }
 
 export interface PlayerClue {
   id: string;
   title: string;
   label: string;
+  /** 線索分組（各幕） */
+  group: string;
   body: string;
   /** 已經帶好驗證參數的圖片網址 */
   images: string[];
   at: string;
+  widget?: "poker";
+}
+
+/** 玩家線索清單的分組；past = 已經是前面幾幕，預設收起來 */
+export interface PlayerClueGroup {
+  id: string;
+  label: string;
+  past: boolean;
 }
 
 export interface PlayerDoc {
@@ -169,6 +233,10 @@ export interface OnlinePlayerSnapshot {
   docs: PlayerDoc[];
   broadcasts: Broadcast[];
   selfUnlock: boolean;
+  /** 有這個欄位的劇本，玩家端線索依幕分組、前面幾幕收起來 */
+  clueGroups?: PlayerClueGroup[];
+  /** 撲克牌線索發給這個玩家之後才有 */
+  poker?: PlayerPoker;
 }
 
 /** 玩家選角畫面用：角色公開資訊與是否已被選走 */

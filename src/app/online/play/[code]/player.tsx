@@ -13,7 +13,8 @@ import {
   useOnlinePlayer,
 } from "@/lib/online/client";
 import { metaForCode } from "@/lib/online/meta";
-import type { OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot } from "@/lib/online/types";
+import type { OnlineLobby, OnlinePlayerIdentity, OnlinePlayerSnapshot, PlayerClue, PlayerClueGroup } from "@/lib/online/types";
+import { PlayerPokerTable } from "../../poker";
 import { RichText } from "../../rich-text";
 
 export function PlayerApp({ code }: { code: string }) {
@@ -154,7 +155,7 @@ function Lobby({ code, onJoined }: { code: string; onJoined: (id: OnlinePlayerId
 type Tab = "script" | "clues" | "news" | "me";
 
 function Panel({ identity, onLeave }: { identity: OnlinePlayerIdentity; onLeave: () => void }) {
-  const { data: snap, error } = useOnlinePlayer(identity);
+  const { data: snap, error, setData } = useOnlinePlayer(identity);
   const hasDocs = Boolean(snap?.docs.length);
   const [tab, setTab] = useState<Tab | null>(null);
   const active: Tab = tab ?? (hasDocs ? "script" : "clues");
@@ -246,7 +247,7 @@ function Panel({ identity, onLeave }: { identity: OnlinePlayerIdentity; onLeave:
       {active === "script" ? (
         <ScriptTab snap={snap} />
       ) : active === "clues" ? (
-        <CluesTab snap={snap} identity={identity} />
+        <CluesTab snap={snap} identity={identity} onSnap={setData} />
       ) : active === "news" ? (
         <NewsTab snap={snap} />
       ) : (
@@ -329,10 +330,74 @@ function lastOpen(docs: { body: string | null }[]) {
   return 0;
 }
 
-function CluesTab({ snap, identity }: { snap: OnlinePlayerSnapshot; identity: OnlinePlayerIdentity }) {
+function CluesTab({
+  snap,
+  identity,
+  onSnap,
+}: {
+  snap: OnlinePlayerSnapshot;
+  identity: OnlinePlayerIdentity;
+  onSnap: (s: OnlinePlayerSnapshot) => void;
+}) {
   const [open, setOpen] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [msg, setMsg] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  const [pokerBusy, setPokerBusy] = useState(false);
+  const [pokerError, setPokerError] = useState("");
+
+  async function pokerOp(op: "shuffle" | "draw" | "stop") {
+    setPokerBusy(true);
+    setPokerError("");
+    try {
+      const r = await onlineApi<{ player: OnlinePlayerSnapshot }>(`/${identity.code}/poker`, {
+        method: "POST",
+        player: identity,
+        body: JSON.stringify({ op }),
+      });
+      onSnap(r.player);
+    } catch (err) {
+      setPokerError(err instanceof ApiError ? err.message : "操作失敗");
+    } finally {
+      setPokerBusy(false);
+    }
+  }
+
+  const item = (c: PlayerClue) => {
+    const isOpen = open === c.id;
+    return (
+      <li key={c.id} className="rounded-xl border border-line bg-panel">
+        <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left" onClick={() => setOpen(isOpen ? null : c.id)}>
+          <span className="min-w-0">
+            <span className="block font-bold text-paper">
+              {c.widget === "poker" ? "🃏" : "📄"} {c.title}
+            </span>
+            <span className="text-xs text-muted">{c.label}</span>
+          </span>
+          <span className="text-muted">{isOpen ? "▲" : "▼"}</span>
+        </button>
+        {isOpen ? (
+          <div className="border-t border-line/60 px-4 py-3">
+            {c.images.length ? (
+              <div className="mb-2 flex flex-wrap justify-center gap-2">
+                {c.images.map((src) => (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img key={src} src={src} alt={c.title} className="max-h-72 max-w-full rounded-lg" />
+                ))}
+              </div>
+            ) : null}
+            {c.widget === "poker" && snap.poker ? (
+              <>
+                <PlayerPokerTable poker={snap.poker} me={snap.role.id} busy={pokerBusy || snap.status === "ended"} onOp={pokerOp} />
+                {pokerError ? <p className="mt-2 text-xs text-vermilion-soft">{pokerError}</p> : null}
+              </>
+            ) : c.body ? (
+              <p className="whitespace-pre-wrap text-sm leading-7 text-paper/95">{c.body}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </li>
+    );
+  };
 
   async function unlock() {
     setMsg(null);
@@ -372,41 +437,63 @@ function CluesTab({ snap, identity }: { snap: OnlinePlayerSnapshot; identity: On
 
       <SectionTitle>我的線索（{snap.clues.length}）</SectionTitle>
       {snap.clues.length ? (
-        <ul className="space-y-2">
-          {snap.clues.map((c) => {
-            const isOpen = open === c.id;
-            return (
-              <li key={c.id} className="rounded-xl border border-line bg-panel">
-                <button type="button" className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left" onClick={() => setOpen(isOpen ? null : c.id)}>
-                  <span className="min-w-0">
-                    <span className="block font-bold text-paper">📄 {c.title}</span>
-                    <span className="text-xs text-muted">{c.label}</span>
-                  </span>
-                  <span className="text-muted">{isOpen ? "▲" : "▼"}</span>
-                </button>
-                {isOpen ? (
-                  <div className="border-t border-line/60 px-4 py-3">
-                    {c.images.length ? (
-                      <div className="mb-2 flex flex-wrap justify-center gap-2">
-                        {c.images.map((src) => (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img key={src} src={src} alt={c.title} className="max-h-72 max-w-full rounded-lg" />
-                        ))}
-                      </div>
-                    ) : null}
-                    {c.body ? <p className="whitespace-pre-wrap text-sm leading-7 text-paper/95">{c.body}</p> : null}
-                  </div>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+        snap.clueGroups ? (
+          <GroupedClues clues={snap.clues} groups={snap.clueGroups} item={item} />
+        ) : (
+          <ul className="space-y-2">{snap.clues.map(item)}</ul>
+        )
       ) : (
         <div className="py-12 text-center text-muted">
           <div className="text-3xl">🔒</div>
           <p className="mt-2 text-sm">尚未收到線索，主持人發放後會自動出現在這裡。</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * 線索依幕分組：目前這一幕（與之後）放上面；前面幾幕收進最下面的摺疊區，
+ * 例如進入第一幕後，開場的線索就不會再擋在前面。
+ */
+function GroupedClues({
+  clues,
+  groups,
+  item,
+}: {
+  clues: PlayerClue[];
+  groups: PlayerClueGroup[];
+  item: (c: PlayerClue) => React.ReactNode;
+}) {
+  const known = new Set(groups.map((g) => g.id));
+  const buckets = [
+    ...groups.map((g) => ({ ...g, clues: clues.filter((c) => c.group === g.id) })),
+    { id: "", label: "其他", past: false, clues: clues.filter((c) => !known.has(c.group)) },
+  ].filter((b) => b.clues.length);
+  // 新的幕在上面
+  const now = buckets.filter((b) => !b.past).reverse();
+  const past = buckets.filter((b) => b.past).reverse();
+
+  const section = (b: (typeof buckets)[number]) => (
+    <section key={b.id || "other"}>
+      <h3 className="mb-1.5 text-xs tracking-[0.2em] text-gold/90">
+        {b.label}（{b.clues.length}）
+      </h3>
+      <ul className="space-y-2">{b.clues.map(item)}</ul>
+    </section>
+  );
+
+  return (
+    <div className="space-y-4">
+      {now.map(section)}
+      {past.length ? (
+        <details className="rounded-xl border border-line/70 bg-panel/50">
+          <summary className="cursor-pointer px-4 py-3 text-sm text-muted">
+            前面幾幕的線索（{past.reduce((n, b) => n + b.clues.length, 0)}）：{past.map((b) => b.label).join("、")}
+          </summary>
+          <div className="space-y-4 border-t border-line/60 px-3 py-3">{past.map(section)}</div>
+        </details>
+      ) : null}
     </div>
   );
 }

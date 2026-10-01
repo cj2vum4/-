@@ -13,6 +13,7 @@ import {
 } from "@/lib/online/client";
 import { metaForCode } from "@/lib/online/meta";
 import type { HostCatalog, HostClue, OnlineHostSnapshot, UnlockDef } from "@/lib/online/types";
+import { HostPokerPanel } from "../../poker";
 import { RichText } from "../../rich-text";
 
 type Tab = "flow" | "clues" | "players" | "broadcast" | "book";
@@ -302,7 +303,7 @@ function FlowTab({
                   // 這一幕中途要手動開的段落（小劇場），按鈕直接放在階段卡片裡
                   <ul className="mt-2.5 space-y-2 border-t border-line/60 pt-2.5">
                     {stepUnlocks.get(p.name)!.map((u) => (
-                      <UnlockRow key={u.key} unlock={u} label={u.title.split("·").pop()!.trim()} snap={snap} busy={busy || ended} act={act} />
+                      <UnlockRow key={u.key} unlock={u} label={u.title.split("·").pop()!.trim()} snap={snap} busy={busy || ended} act={act} enter />
                     ))}
                   </ul>
                 ) : null}
@@ -343,7 +344,10 @@ function FlowTab({
   );
 }
 
-/** 一個劇本段落的開放開關（再按一次會關上） */
+/**
+ * 一個劇本段落的開放開關（再按一次會關上）。
+ * enter：階段卡片裡的小劇場，按鈕寫「進入小劇場」，比「開放」直覺
+ */
 function UnlockRow({
   unlock: u,
   label,
@@ -351,6 +355,7 @@ function UnlockRow({
   busy,
   act,
   boxed = false,
+  enter = false,
 }: {
   unlock: UnlockDef;
   label: string;
@@ -358,8 +363,10 @@ function UnlockRow({
   busy: boolean;
   act: Act;
   boxed?: boolean;
+  enter?: boolean;
 }) {
   const on = Boolean(snap.unlocks[u.key]);
+  const off = enter ? `進入${label.replace(/（.*?）/g, "")}` : "開放";
   return (
     <li className={`flex items-center justify-between gap-3 ${boxed ? "rounded-lg border border-line bg-panel px-3.5 py-2.5" : ""}`}>
       <div className="min-w-0">
@@ -376,7 +383,7 @@ function UnlockRow({
         disabled={busy}
         onClick={() => act({ action: "unlock", key: u.key, on: !on }, on ? `已關閉：${u.title}` : `已開放：${u.title}`)}
       >
-        {on ? "已開放" : "開放"}
+        {on ? (enter ? "已進入" : "已開放") : off}
       </Button>
     </li>
   );
@@ -582,6 +589,7 @@ function ClueCard({
               ))}
             </div>
           ) : null}
+          {clue.widget === "poker" ? <HostPokerPanel poker={snap.poker} roles={catalog.roles} busy={busy || ended} act={act} /> : null}
         </div>
       ) : null}
 

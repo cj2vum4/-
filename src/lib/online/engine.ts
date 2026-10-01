@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
 import { GameError } from "../errors";
+import { freshDeck, isCard, shuffled } from "./poker";
 import { imageNames } from "./rich";
 import { getScript, groupsOf, scriptForCode, type DocDef, type ScriptDef } from "./scripts";
 import { getOnlineStore, type OnlineSession } from "./store";
@@ -12,7 +13,10 @@ import type {
   OnlinePlayerSnapshot,
   OnlineScriptId,
   PlayerClue,
+  PlayerClueGroup,
   PlayerDoc,
+  PlayerPoker,
+  PokerState,
 } from "./types";
 
 /**
@@ -193,6 +197,7 @@ export async function hostSnapshot(code: string): Promise<OnlineHostSnapshot> {
       extra: seat.extra,
       online: t - (lastSeen.get(`${code}:${roleId}`) ?? 0) < ONLINE_WINDOW_MS,
     })),
+    poker: s.poker ?? null,
   };
 }
 
@@ -239,7 +244,21 @@ export type HostAction =
   | { action: "releaseGroup"; group: string }
   | { action: "broadcast"; message: string }
   | { action: "freeSeat"; roleId: string }
-  | { action: "end" };
+  | { action: "end" }
+  | ({ action: "poker" } & PokerHostOp);
+
+/** 主持人（陸江遠）對撲克牌局的操作 */
+export type PokerHostOp =
+  | { op: "shuffle" }
+  | { op: "deal" }
+  | { op: "round"; roleId: string }
+  | { op: "dealerDraw" }
+  | { op: "dealerStop" }
+  | { op: "reveal" }
+  | { op: "collect" }
+  | { op: "poison"; card: string }
+  | { op: "unpoison" }
+  | { op: "reset" };
 
 export async function hostAction(code: string, a: HostAction): Promise<void> {
   const current = await load(code);
@@ -323,10 +342,196 @@ export async function hostAction(code: string, a: HostAction): Promise<void> {
         s.status = "ended";
         return;
       }
+      case "poker": {
+        hostPoker(s, def, a);
+        return;
+      }
       default:
         throw new GameError("BAD_REQUEST", "未知的操作");
     }
   });
+}
+
+// ---------------- 撲克牌局（瘋兔子第一幕） ----------------
+
+const MAX_POKER_LOG = 60;
+const HOST_NAME = "主持人";
+const badPoker = (message: string) => new GameError("BAD_REQUEST", message);
+
+function newPoker(): PokerState {
+  return { mode: "inspect", deck: freshDeck(), discard: [], round: null, poison: null, log: [] };
+}
+
+function pokerOf(s: OnlineSession): PokerState {
+  return (s.poker ??= newPoker());
+}
+
+function pokerLog(p: PokerState, who: string, action: string) {
+  p.log = [...p.log, { who, action, at: now() }].slice(-MAX_POKER_LOG);
+}
+
+/** 從新牌堆頂抽一張 */
+function drawCard(p: PokerState): string {
+  const card = p.deck.shift();
+  if (!card) throw badPoker("新牌堆沒有牌了");
+  return card;
+}
+
+function needRound(p: PokerState) {
+  if (!p.round) throw badPoker("現在沒有進行中的牌局");
+  return p.round;
+}
+
+function hostPoker(s: OnlineSession, def: ScriptDef, a: PokerHostOp) {
+  const p = pokerOf(s);
+  switch (a.op) {
+    case "shuffle": {
+      if (p.mode === "reveal") throw badPoker("已經公開牌堆，不能再洗牌");
+      p.deck = shuffled(p.deck, randomInt);
+      pokerLog(p, HOST_NAME, p.mode === "inspect" ? "洗牌" : "把新牌堆再洗一次");
+      return;
+    }
+    case "deal": {
+      if (p.mode !== "inspect") throw badPoker("已經開始發牌了");
+      p.mode = "deal";
+      pokerLog(p, HOST_NAME, "驗牌結束，開始發牌（牌面蓋起來）");
+      return;
+    }
+    case "round": {
+      if (p.mode !== "deal") throw badPoker("請先按「開始發牌」");
+      if (p.round) throw badPoker("請先把上一局的牌收進棄牌堆");
+      const role = def.roles.find((r) => r.id === a.roleId);
+      if (!role) throw badPoker("沒有這個角色");
+      // 規則：每位玩家發一張起始牌，蓋在自己面前；莊家也一張
+      p.round = { roleId: role.id, player: [drawCard(p)], dealer: [drawCard(p)], playerStop: false, dealerStop: false, revealed: false };
+      pokerLog(p, HOST_NAME, `和${role.name}開一局，各發一張起始牌`);
+      return;
+    }
+    case "dealerDraw": {
+      const r = needRound(p);
+      if (r.revealed || r.dealerStop) throw badPoker("莊家已經停止了");
+      r.dealer.push(drawCard(p));
+      pokerLog(p, HOST_NAME, "莊家抽一張牌");
+      return;
+    }
+    case "dealerStop": {
+      const r = needRound(p);
+      r.dealerStop = true;
+      pokerLog(p, HOST_NAME, "莊家停止");
+      return;
+    }
+    case "reveal": {
+      const r = needRound(p);
+      r.revealed = true;
+      pokerLog(p, HOST_NAME, "翻牌比點");
+      return;
+    }
+    case "collect": {
+      const r = needRound(p);
+      p.discard.push(...r.player, ...r.dealer);
+      p.round = null;
+      pokerLog(p, HOST_NAME, "這一局的牌收進棄牌堆");
+      return;
+    }
+    case "poison": {
+      if (p.round) throw badPoker("請先把這一局的牌收進棄牌堆");
+      if (!isCard(a.card) || !p.deck.includes(a.card)) throw badPoker("毒牌標記只能貼在新牌堆裡的牌");
+      p.poison = a.card;
+      p.mode = "reveal";
+      pokerLog(p, HOST_NAME, "牌局作廢；公開棄牌堆與新牌堆");
+      return;
+    }
+    case "unpoison": {
+      if (p.mode !== "reveal") throw badPoker("還沒有貼毒牌標記");
+      p.poison = null;
+      p.mode = "deal";
+      pokerLog(p, HOST_NAME, "撤掉毒牌標記，回到發牌");
+      return;
+    }
+    case "reset": {
+      s.poker = newPoker();
+      return;
+    }
+    default:
+      throw badPoker("未知的牌局操作");
+  }
+}
+
+/** 撲克牌線索（cards.json 裡 widget = poker 的那張） */
+function pokerClueId(all: Map<string, HostClue>): string | null {
+  for (const c of all.values()) if (c.widget === "poker") return c.id;
+  return null;
+}
+
+/** 玩家看到的牌局：驗牌時看得到整副牌；發牌後只看得到翻開的牌；貼毒牌標記後公開兩個牌堆 */
+function playerPokerView(def: ScriptDef, state: PokerState | undefined, roleId: string): PlayerPoker {
+  const p = state ?? newPoker();
+  const open = p.mode === "reveal";
+  const r = p.round;
+  return {
+    mode: p.mode,
+    deck: p.mode === "deal" ? p.deck.map(() => null) : [...p.deck],
+    discard: open ? [...p.discard] : p.discard.map(() => null),
+    round: r
+      ? {
+          ...r,
+          roleName: def.roles.find((x) => x.id === r.roleId)?.name ?? r.roleId,
+          // 起始牌蓋著：玩家只看得到自己的起始牌，翻牌比點之後大家都看得到
+          player: r.player.map((c, i) => (i === 0 && !r.revealed && r.roleId !== roleId ? null : c)),
+          dealer: r.dealer.map((c, i) => (i === 0 && !r.revealed ? null : c)),
+        }
+      : null,
+    poison: open ? p.poison : null,
+    log: p.log.slice(-20),
+  };
+}
+
+export type PokerPlayerOp = "shuffle" | "draw" | "stop";
+
+/** 玩家對牌局的操作：驗牌時洗牌；輪到自己時抽牌或停止 */
+export async function playerPoker(code: string, roleId: string, op: PokerPlayerOp): Promise<void> {
+  const current = await load(code);
+  const def = getScript(current.script);
+  const pokerId = pokerClueId(await clueMap(def));
+  const name = def.roles.find((r) => r.id === roleId)?.name ?? roleId;
+
+  await mutate(code, (s) => {
+    assertActive(s);
+    if (!pokerId || !visibleTo(s, pokerId, roleId)) throw new GameError("UNAUTHORIZED", "撲克牌還沒發給你");
+    const p = pokerOf(s);
+    if (op === "shuffle") {
+      if (p.mode !== "inspect") throw badPoker("已經開始發牌，不能再洗牌");
+      p.deck = shuffled(p.deck, randomInt);
+      pokerLog(p, name, "驗牌、洗牌");
+      return;
+    }
+    const r = p.round;
+    if (!r || r.roleId !== roleId) throw badPoker("現在不是你的回合");
+    if (r.revealed || r.playerStop) throw badPoker("你已經停止了");
+    if (op === "draw") {
+      r.player.push(drawCard(p));
+      pokerLog(p, name, "抽一張牌");
+    } else if (op === "stop") {
+      r.playerStop = true;
+      pokerLog(p, name, "停止");
+    } else {
+      throw badPoker("未知的牌局操作");
+    }
+  });
+}
+
+/** 玩家線索分組：目前階段自動開的那一幕之前的分組算「前面幾幕」 */
+function clueGroupsFor(def: ScriptDef, s: OnlineSession, clues: HostClue[]): PlayerClueGroup[] | undefined {
+  if (!def.foldPastClues) return undefined;
+  const groups = groupsOf(def, clues);
+  let current: string | undefined;
+  for (let i = 0; i <= s.phase; i++) {
+    const key = def.phases[i]?.unlock;
+    const group = key ? def.unlocks.find((u) => u.key === key)?.group : undefined;
+    if (group) current = group;
+  }
+  const at = current ? groups.findIndex((g) => g.id === current) : -1;
+  return groups.map((g, i) => ({ id: g.id, label: g.label, past: at >= 0 && i < at }));
 }
 
 function release(s: OnlineSession, def: ScriptDef, clue: HostClue, to: string) {
@@ -456,9 +661,11 @@ export async function playerSnapshot(
       id: c.id,
       title: c.playerTitle ?? c.title,
       label: c.label,
+      group: c.group,
       body: c.body,
       images: c.images.map((name) => assetUrl(code, roleId, name)),
       at: s.released[id]?.at ?? "",
+      ...(c.widget ? { widget: c.widget } : {}),
     });
   }
   // 最新發的放最上面
@@ -489,6 +696,8 @@ export async function playerSnapshot(
     docs,
     broadcasts: s.broadcasts,
     selfUnlock: def.selfUnlock,
+    ...(def.foldPastClues ? { clueGroups: clueGroupsFor(def, s, [...all.values()]) } : {}),
+    ...(clues.some((c) => c.widget === "poker") ? { poker: playerPokerView(def, s.poker, roleId) } : {}),
   };
 }
 
