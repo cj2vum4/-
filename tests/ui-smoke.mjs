@@ -82,12 +82,22 @@ try {
   check("首頁標題", await host.title(), "海星劇本殺");
   check("首頁沒有主持人入口", await host.locator("text=主持人入口").count(), 0);
 
-  // ---- 2. 主持人從海星的秘密入口開場次：頂端開始順時針點五隻腳 ----
-  const arms = host.locator("header [data-arm]");
-  for (const i of [0, 1, 3]) await arms.nth(i).click(); // 順序錯了要歸零
-  await host.waitForTimeout(1000);
-  check("點錯順序不會開門", await host.locator("text=主持人入口").count(), 0);
-  for (let i = 0; i < 5; i++) await arms.nth(i).click();
+  // ---- 2. 主持人從海星的秘密入口開場次：按住海星不放、繞著畫 3 圈 ----
+  const star = await host.locator("header img[alt='海星劇本殺']").boundingBox();
+  const circle = async (turns) => {
+    const [cx, cy, r] = [star.x + star.width / 2, star.y + star.height / 2, star.width * 0.35];
+    await host.mouse.move(cx + r, cy);
+    await host.mouse.down();
+    for (let k = 1; k <= turns * 24; k++) {
+      const a = (k / 24) * 2 * Math.PI;
+      await host.mouse.move(cx + r * Math.cos(a), cy + r * Math.sin(a));
+    }
+    await host.mouse.up();
+  };
+  await circle(2); // 只畫 2 圈不會開
+  await host.waitForTimeout(1500);
+  check("畫不到 3 圈不會開門", await host.locator("text=主持人入口").count(), 0);
+  await circle(3.1);
   await host.waitForSelector("text=主持人入口", { timeout: 5000 });
   await shot(host, "1b-secret-door");
   console.log("  PASS  海星秘密入口打開");
