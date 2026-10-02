@@ -172,11 +172,11 @@ export async function createOnlineSession(
   });
 }
 
-/** 某一天各劇本的場次（沒開的不列） */
-async function sessionsOn(date: string): Promise<OnlineSession[]> {
+/** 某一天各劇本的場次（沒開的不列）；給了劇本就只找那個劇本 */
+async function sessionsOn(date: string, script?: OnlineScriptId): Promise<OnlineSession[]> {
   const key = requireDateKey(date);
   const found: OnlineSession[] = [];
-  for (const id of ONLINE_SCRIPT_IDS) {
+  for (const id of script ? [script] : ONLINE_SCRIPT_IDS) {
     try {
       found.push(await load(codeForDate(getScript(id).codePrefix, key)));
     } catch (err) {
@@ -198,10 +198,13 @@ export function hostCodeFor(script: OnlineScriptId, date: string): string {
 export async function findByDate(
   date: string,
   nickname: string,
+  script?: OnlineScriptId,
 ): Promise<{ sessions: { code: string; script: OnlineScriptId; status: "active" | "ended" }[]; identity?: { code: string; roleId: string; token: string } }> {
   const name = (nickname ?? "").trim();
-  const list = await sessionsOn(date);
-  if (!list.length) throw new GameError("SESSION_NOT_FOUND", "這一天沒有場次，請確認日期");
+  const list = await sessionsOn(date, script);
+  if (!list.length) {
+    throw new GameError("SESSION_NOT_FOUND", script ? `這一天沒有開《${getScript(script).title}》的場次，請確認號碼` : "這一天沒有場次，請確認號碼");
+  }
   if (name) {
     for (const s of list) {
       const hit = Object.entries(s.seats).find(([, seat]) => sameName(seat.nickname, name));

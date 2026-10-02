@@ -79,10 +79,19 @@ try {
   const host = await newPage(hostCtx, "host");
   await host.goto(BASE, { waitUntil: "networkidle" });
   await shot(host, "1-landing");
-  check("首頁標題", await host.title(), "九爺，我想給您養老");
+  check("首頁標題", await host.title(), "海星劇本殺");
+  check("首頁沒有主持人入口", await host.locator("text=主持人入口").count(), 0);
 
-  // ---- 2. 主持人開場次 ----
-  await host.click("text=我是主持人");
+  // ---- 2. 主持人從海星的秘密入口開場次：頂端開始順時針點五隻腳 ----
+  const arms = host.locator("header svg circle");
+  for (const i of [0, 1, 3]) await arms.nth(i).click(); // 順序錯了要歸零
+  await host.waitForTimeout(1000);
+  check("點錯順序不會開門", await host.locator("text=主持人入口").count(), 0);
+  for (let i = 0; i < 5; i++) await arms.nth(i).click();
+  await host.waitForSelector("text=主持人入口", { timeout: 5000 });
+  await shot(host, "1b-secret-door");
+  console.log("  PASS  海星秘密入口打開");
+  await host.click('section a:has-text("九爺，我想給您養老")');
   await host.waitForURL("**/host");
   await host.fill('input[placeholder="至少 4 個字"]', PASSWORD);
   await host.fill('input[placeholder="例：週六下午場"]', "禮拜四晚場");
@@ -100,7 +109,7 @@ try {
   });
   const player = await newPage(mobile, "player");
   await player.goto(BASE, { waitUntil: "networkidle" });
-  await player.click("text=我是玩家");
+  await player.click('a:has-text("九爺，我想給您養老")');
   await player.waitForURL("**/player");
   await player.fill('input[placeholder="主持人會告訴你"]', "沒有這組密碼");
   await player.click('button[type="submit"]');

@@ -78,6 +78,11 @@ check("那天沒有場次", (await find(randomDay(), "阿明")).status, 404);
 await open("fengtuz", day);
 found = (await find(day, "新來的")).json;
 ok("同一天兩個劇本都有場次就兩個都列出來", found.sessions?.map((x) => x.script).sort().join() === "fengtuz,tiancai");
+found = (await call("/find", { method: "POST", body: { date: day, nickname: "新來的", script: "fengtuz" } })).json;
+ok("從首頁選了劇本就只找那個劇本", found.sessions?.length === 1 && found.sessions[0].script === "fengtuz");
+found = (await call("/find", { method: "POST", body: { date: day, nickname: "阿明", script: "fengtuz" } })).json;
+ok("選了別的劇本，不會用暱稱登進另一個劇本的角色", !found.identity && found.sessions?.[0]?.script === "fengtuz");
+check("那天沒開這個劇本", (await call("/find", { method: "POST", body: { date: randomDay(), nickname: "x", script: "fengtuz" } })).status, 404);
 check("用日期算出代碼、主持密碼回主持台", (await call(`/TC-${day.replace(/-/g, "")}/state`, { headers: host })).status, 200);
 check("假憑證被擋", (await call(`/${code}/state`, { headers: as({ roleId: "01", token: "x" }) })).status, 401);
 

@@ -45,7 +45,7 @@ export default function PlayerEntryPage() {
 
   return (
     <PageShell>
-      <BackLink href="/" label="回身分選擇" />
+      <BackLink href="/" label="回劇本選擇" />
 
       <header className="mt-6 mb-6">
         <span className="flex h-12 w-12 items-center justify-center rounded-md border border-gold/50 bg-gold/10 text-2xl font-bold text-gold-soft">

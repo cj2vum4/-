@@ -65,7 +65,7 @@ export default function HostEntryPage() {
 
   return (
     <PageShell>
-      <BackLink href="/" label="回身分選擇" />
+      <BackLink href="/" label="回首頁" />
 
       <header className="mt-6 mb-6">
         <span className="flex h-12 w-12 items-center justify-center rounded-md border border-vermilion/50 bg-vermilion/10 text-2xl font-bold text-vermilion-soft">

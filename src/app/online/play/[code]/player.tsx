@@ -105,7 +105,7 @@ function Lobby({ code, onJoined }: { code: string; onJoined: (id: OnlinePlayerId
 
   return (
     <PageShell>
-      <BackLink href="/online/join" label="換一個場次" />
+      <BackLink href={`/online/join?script=${metaForCode(code)?.id ?? ""}`} label="換一個場次" />
       <p className="mt-4 text-xs tracking-[0.3em] text-muted">場次 {dateOfCode(code) ?? code}</p>
       <h1 className="mt-1 text-2xl font-bold text-gold-soft">{lobby?.title ?? "讀取中…"}</h1>
       {lobby?.status === "ended" ? (
