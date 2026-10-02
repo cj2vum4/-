@@ -83,7 +83,7 @@ try {
   check("首頁沒有主持人入口", await host.locator("text=主持人入口").count(), 0);
 
   // ---- 2. 主持人從海星的秘密入口開場次：頂端開始順時針點五隻腳 ----
-  const arms = host.locator("header svg circle");
+  const arms = host.locator("header [data-arm]");
   for (const i of [0, 1, 3]) await arms.nth(i).click(); // 順序錯了要歸零
   await host.waitForTimeout(1000);
   check("點錯順序不會開門", await host.locator("text=主持人入口").count(), 0);
