@@ -1,110 +1,59 @@
 import Link from "next/link";
-import { APP_NAME } from "@/lib/config";
+import { SCRIPTS } from "@/lib/catalog";
 import { diagnoseCredentials } from "@/lib/store/credentials";
+import { StarfishGate } from "./starfish-gate";
 
 export const dynamic = "force-dynamic";
+export const metadata = { title: "海星劇本殺" };
 
-export default function LandingPage() {
+/**
+ * 首頁：選劇本。點進去的所有畫面都是玩家端。
+ * 主持人從上方海星的秘密入口進（見 starfish-gate.tsx）。
+ */
+export default function HomePage() {
   const cred = diagnoseCredentials();
   const hasSheetId = Boolean((process.env.GOOGLE_SHEETS_SPREADSHEET_ID ?? "").trim());
   // 三種狀態要分清楚：設定好、設定了但壞掉、根本沒設定。
   // 中間那種最危險——若誤報成正常，主持人會辦完整場才發現什麼都沒存到。
+  // 這是給主持人看的，只放在秘密入口裡。
   const mode: "sheets" | "broken" | "memory" =
     hasSheetId && cred.ok ? "sheets" : cred.source || hasSheetId ? "broken" : "memory";
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-2xl flex-col justify-center px-5 py-12">
-      <header className="text-center fade-up">
-        <p className="text-sm tracking-[0.5em] text-gold/70">壹 玖 貳 柒</p>
-        <h1 className="mt-5 text-4xl leading-tight font-bold text-gold-soft sm:text-5xl">
-          {APP_NAME}
-        </h1>
-        <div className="mx-auto mt-6 flex items-center justify-center gap-3">
+      <header className="fade-up text-center">
+        <StarfishGate hosts={SCRIPTS.map((s) => ({ id: s.id, title: s.title, href: s.hostHref }))}>
+          九爺資料庫模式：
+          {mode === "sheets" ? (
+            <span className="text-jade-soft">Google Sheet（正式）</span>
+          ) : mode === "broken" ? (
+            <span className="text-vermilion-soft">⚠ 設定有誤，資料不會寫入試算表 —— 請開啟 /api/health 查看原因</span>
+          ) : (
+            <span className="text-vermilion-soft">記憶體暫存（未設定憑證，重啟即清空）</span>
+          )}
+        </StarfishGate>
+        <h1 className="mt-5 text-3xl font-bold tracking-[0.3em] text-gold-soft sm:text-4xl">海星劇本殺</h1>
+        <div className="mx-auto mt-5 flex items-center justify-center gap-3">
           <span className="h-px w-14 bg-line" />
-          <span className="text-xs tracking-[0.3em] text-muted">請 表 明 身 分</span>
+          <span className="text-xs tracking-[0.3em] text-muted">選 一 個 故 事</span>
           <span className="h-px w-14 bg-line" />
         </div>
       </header>
 
-      <div className="mt-10 grid gap-4 sm:grid-cols-2">
-        <RoleCard
-          href="/player"
-          badge="賓"
-          title="我是玩家"
-          desc="輸入今日場次，入府爭取威望與勢力"
-          accent="gold"
-        />
-        <RoleCard
-          href="/host"
-          badge="主"
-          title="我是主持人"
-          desc="開啟今日場次，調配全場資源與階段"
-          accent="vermilion"
-        />
+      <div className="mt-10 grid gap-4">
+        {SCRIPTS.map((s) => (
+          <Link
+            key={s.id}
+            href={s.playerHref}
+            className={`${s.theme ?? ""} fade-up group block rounded-xl border border-line bg-panel/80 px-5 py-5 transition-all duration-200 hover:-translate-y-0.5 hover:border-gold/70`}
+            style={{ minHeight: 0 }}
+          >
+            <h2 className="text-xl font-bold text-gold-soft">{s.title}</h2>
+            <p className="mt-1 text-sm text-muted">{s.tagline}</p>
+            <span className="mt-3 block text-xs tracking-[0.25em] text-muted/60 transition-colors group-hover:text-gold/80">進 入 →</span>
+          </Link>
+        ))}
       </div>
-
-      <Link
-        href="/online"
-        className="fade-up mt-6 block rounded-xl border border-line/70 bg-panel/50 px-5 py-4 text-center text-sm text-muted transition-colors hover:border-gold/60 hover:text-gold-soft"
-      >
-        其他劇本的線上主持（瘋兔子、天才在左我在右）→
-      </Link>
-
-      <footer className="mt-12 text-center text-xs text-muted/70">
-        <p>
-          資料庫模式：
-          {mode === "sheets" ? (
-            <span className="text-jade-soft">Google Sheet（正式）</span>
-          ) : mode === "broken" ? (
-            <span className="text-vermilion-soft">
-              ⚠ 設定有誤，資料不會寫入試算表 —— 請開啟 /api/health 查看原因
-            </span>
-          ) : (
-            <span className="text-vermilion-soft">記憶體暫存（未設定憑證，重啟即清空）</span>
-          )}
-        </p>
-      </footer>
     </main>
-  );
-}
-
-function RoleCard({
-  href,
-  badge,
-  title,
-  desc,
-  accent,
-}: {
-  href: string;
-  badge: string;
-  title: string;
-  desc: string;
-  accent: "gold" | "vermilion";
-}) {
-  const ring =
-    accent === "gold"
-      ? "hover:border-gold/70 hover:shadow-[0_0_30px_-8px_rgba(216,178,108,0.45)]"
-      : "hover:border-vermilion/70 hover:shadow-[0_0_30px_-8px_rgba(196,69,58,0.45)]";
-  const seal =
-    accent === "gold"
-      ? "border-gold/50 text-gold-soft bg-gold/10"
-      : "border-vermilion/50 text-vermilion-soft bg-vermilion/10";
-
-  return (
-    <Link
-      href={href}
-      className={`fade-up group flex flex-col items-center rounded-xl border border-line bg-panel/80 px-6 py-10 text-center transition-all duration-200 hover:-translate-y-1 ${ring}`}
-    >
-      <span
-        className={`flex h-16 w-16 items-center justify-center rounded-md border text-3xl font-bold ${seal}`}
-      >
-        {badge}
-      </span>
-      <h2 className="mt-5 text-2xl font-bold text-paper">{title}</h2>
-      <p className="mt-2 text-sm leading-relaxed text-muted">{desc}</p>
-      <span className="mt-5 text-xs tracking-[0.25em] text-muted/60 transition-colors group-hover:text-gold/80">
-        進 入 →
-      </span>
-    </Link>
   );
 }

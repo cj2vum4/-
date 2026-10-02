@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { BackLink, Button, Field, Notice, PageShell } from "@/components/ui";
 import { ApiError, onlineApi, saveIdentity } from "@/lib/online/client";
 import { parseDateKey, todayKey } from "@/lib/online/date-code";
-import { metaForCode } from "@/lib/online/meta";
+import { metaForCode, ONLINE_META } from "@/lib/online/meta";
 import { DateCodeField } from "../date-field";
 import type { OnlinePlayerIdentity, OnlineScriptId } from "@/lib/online/types";
 
@@ -24,6 +24,10 @@ export function JoinForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const role = params.get("role");
+  // 從首頁選了劇本進來就只找這個劇本的場次
+  const scriptParam = params.get("script");
+  const script = scriptParam && scriptParam in ONLINE_META ? (scriptParam as OnlineScriptId) : null;
+  const meta = script ? ONLINE_META[script] : null;
 
   const toLobby = (code: string) => {
     const q = new URLSearchParams();
@@ -50,7 +54,7 @@ export function JoinForm() {
     try {
       const r = await onlineApi<{ sessions: Found[]; identity?: OnlinePlayerIdentity }>("/find", {
         method: "POST",
-        body: JSON.stringify({ date, nickname }),
+        body: JSON.stringify({ date, nickname, script }),
       });
       if (r.identity) {
         saveIdentity(r.identity);
@@ -67,46 +71,49 @@ export function JoinForm() {
   }
 
   return (
-    <PageShell>
-      <BackLink href="/online" label="線上主持" />
-      <h1 className="mt-4 text-2xl font-bold text-gold-soft">玩家入場</h1>
-      <p className="mt-2 text-sm text-muted">輸入主持人給的場次號碼和你的暱稱。第一次來會進到選角；之前來過，用同一個暱稱就能回到你的角色。</p>
-      <div className="mt-6 space-y-3">
-        <DateCodeField value={date} onChange={(v) => (setDate(v), setError(""), setChoices([]))} />
-        <Field
-          label="你的暱稱"
-          hint="主持人會用這個名字稱呼你；之後換手機或重新整理，也是用它回來。"
-          maxLength={20}
-          value={nickname}
-          onChange={(e) => (setNickname(e.target.value), setError(""))}
-          onKeyDown={(e) => e.key === "Enter" && date.length === 8 && nickname.trim() && void go()}
-          autoComplete="off"
-        />
-        {error ? <Notice>{error}</Notice> : null}
-        <Button className="w-full" disabled={busy || date.length !== 8 || !nickname.trim()} onClick={go}>
-          進入場次
-        </Button>
-      </div>
-
-      {choices.length ? (
-        <div className="mt-5 space-y-2">
-          <p className="text-sm text-muted">這一天有 {choices.length} 個劇本開場，請選你要玩的：</p>
-          {choices.map((c) => {
-            const m = metaForCode(c.code);
-            return (
-              <button
-                key={c.code}
-                type="button"
-                onClick={() => toLobby(c.code)}
-                className={`${m?.theme ?? ""} block w-full rounded-lg border border-line bg-panel px-4 py-3 text-left`}
-              >
-                <span className="block font-bold text-gold-soft">{m?.title ?? c.code}</span>
-                <span className="text-xs text-muted">{m?.players}{c.status === "ended" ? "・已結束" : ""}</span>
-              </button>
-            );
-          })}
+    <div className={meta?.theme}>
+      <PageShell>
+        <BackLink href="/" label="回劇本選擇" />
+        {meta ? <p className="mt-4 text-sm text-muted">{meta.title}</p> : null}
+        <h1 className={`${meta ? "mt-1" : "mt-4"} text-2xl font-bold text-gold-soft`}>玩家入場</h1>
+        <p className="mt-2 text-sm text-muted">輸入主持人給的場次號碼和你的暱稱。第一次來會進到選角；之前來過，用同一個暱稱就能回到你的角色。</p>
+        <div className="mt-6 space-y-3">
+          <DateCodeField value={date} onChange={(v) => (setDate(v), setError(""), setChoices([]))} />
+          <Field
+            label="你的暱稱"
+            hint="主持人會用這個名字稱呼你；之後換手機或重新整理，也是用它回來。"
+            maxLength={20}
+            value={nickname}
+            onChange={(e) => (setNickname(e.target.value), setError(""))}
+            onKeyDown={(e) => e.key === "Enter" && date.length === 8 && nickname.trim() && void go()}
+            autoComplete="off"
+          />
+          {error ? <Notice>{error}</Notice> : null}
+          <Button className="w-full" disabled={busy || date.length !== 8 || !nickname.trim()} onClick={go}>
+            進入場次
+          </Button>
         </div>
-      ) : null}
-    </PageShell>
+
+        {choices.length ? (
+          <div className="mt-5 space-y-2">
+            <p className="text-sm text-muted">這一天有 {choices.length} 個劇本開場，請選你要玩的：</p>
+            {choices.map((c) => {
+              const m = metaForCode(c.code);
+              return (
+                <button
+                  key={c.code}
+                  type="button"
+                  onClick={() => toLobby(c.code)}
+                  className={`${m?.theme ?? ""} block w-full rounded-lg border border-line bg-panel px-4 py-3 text-left`}
+                >
+                  <span className="block font-bold text-gold-soft">{m?.title ?? c.code}</span>
+                  <span className="text-xs text-muted">{m?.players}{c.status === "ended" ? "・已結束" : ""}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+      </PageShell>
+    </div>
   );
 }

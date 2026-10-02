@@ -71,7 +71,7 @@ export function HostEntry() {
   return (
     <div className={meta.theme}>
       <PageShell>
-        <BackLink href="/online" label="線上主持" />
+        <BackLink href="/" label="回首頁" />
         <h1 className="mt-4 text-2xl font-bold text-gold-soft">主持人開場</h1>
 
         <div className="mt-5 grid grid-cols-2 gap-2">
