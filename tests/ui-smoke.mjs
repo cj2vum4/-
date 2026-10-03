@@ -6,6 +6,7 @@
  * 會走過：身分選擇 → 主持人開場 → 玩家「無此場次」→ 玩家入場 →
  *         主持人發放資源 → 玩家端即時更新 → 階段切換。
  */
+import { existsSync } from "node:fs";
 import { chromium } from "playwright";
 
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:3100";
@@ -19,7 +20,14 @@ const shot = async (page, name, opts = {}) =>
   SHOTS ? page.screenshot({ path: `${SHOTS}/${name}.png`, ...opts }) : null;
 
 console.log(`使用開場密碼 ${PASSWORD}`);
-const browser = await chromium.launch();
+/*
+ * 容器裡預裝的 Chromium 版本不一定跟 playwright 套件要的那一版相同。
+ * 有預裝的就直接用，不要去下載——環境是唯讀的，而且下載很慢。
+ */
+const CHROME = process.env.CHROME_PATH ?? "/opt/pw-browsers/chromium";
+const browser = await chromium.launch(
+  existsSync(CHROME) ? { executablePath: CHROME } : {},
+);
 const errors = [];
 const fail = [];
 

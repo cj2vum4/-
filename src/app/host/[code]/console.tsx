@@ -38,6 +38,7 @@ import {
 import { ApiError, api, clearHostPin, loadHostPin, saveHostPin } from "@/lib/client";
 import { rankByPower, useHostState } from "@/lib/use-session-state";
 import type { Player, ResourceKey } from "@/lib/types";
+import type { Standing } from "@/lib/game";
 
 export function HostConsole({ code }: { code: string }) {
   /** null = 還在讀 localStorage，"" = 需要輸入通行碼 */
@@ -720,6 +721,8 @@ function Console({
           />
 
           <CertificatePanel
+            code={code}
+            pin={pin}
             players={players}
             stageId={session?.stageId ?? ""}
             issued={Boolean(session?.certsIssued)}
@@ -1029,16 +1032,23 @@ function Console({
 /**
  * 會長就任聘書。
  *
- * 依規則，第 1 名與第 2 名勢力值同分時不可自動判定會長，所以這裡先把名次與稱號
- * 攤開讓主持人核對；同分或有人沒填暱稱時直接擋下來，不讓他按到後端才報錯。
+ * 名次依「陣營 → 累計獲得勢力」決定，不是最終勢力值——終盤點數大概率會收斂在
+ * 一兩個人身上，那個數字反映的是錢停在誰手上，不是誰真的賺得多。
+ *
+ * 累計要讀完整流水帳才算得出來，成本比一般輪詢高，所以走獨立的 /standings，
+ * 只在這個面板打開時抓一次，不跟著每 3 秒的輪詢跑。
  */
 function CertificatePanel({
+  code,
+  pin,
   players,
   stageId,
   issued,
   busy,
   onIssue,
 }: {
+  code: string;
+  pin: string;
   players: Player[];
   stageId: string;
   issued: boolean;
@@ -1046,18 +1056,45 @@ function CertificatePanel({
   onIssue: () => void;
 }) {
   const isFinal = stageId === "final";
-  const ordered = [...players].sort(
-    (a, b) => b.power - a.power || a.joinedAt.localeCompare(b.joinedAt),
-  );
-  const missing = ordered.filter((p) => !p.nickname.trim());
-  const tie = ordered.length >= 2 && ordered[0].power === ordered[1].power;
-  const blocker = tie
-    ? `${ordered[0].name} 與 ${ordered[1].name} 勢力值同為 ${ordered[0].power}，請先調整再發放`
-    : missing.length > 0
-      ? `${missing.map((p) => p.name).join("、")} 沒有填暱稱，聘書無法署名`
-      : ordered.length === 0
-        ? "場上沒有玩家"
-        : "";
+  const [standings, setStandings] = useState<Standing[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isFinal) return;
+    let alive = true;
+    setLoadError(null);
+    api<{ standings: Standing[] }>(`/api/sessions/${code}/standings`, { hostPin: pin })
+      .then((d) => alive && setStandings(d.standings))
+      .catch((err) => {
+        if (!alive) return;
+        setLoadError(err instanceof ApiError ? err.message : "讀取排名失敗");
+      });
+    return () => {
+      alive = false;
+    };
+    // issued 變動時重抓，發放後名次要對得上
+  }, [code, pin, isFinal, issued, players.length]);
+
+  const missing = players.filter((p) => !p.nickname.trim());
+  const noFaction = players.filter((p) => !p.faction);
+  const deadlock =
+    standings && standings.length >= 2 &&
+    standings[0].faction === standings[1].faction &&
+    standings[0].cumulative === standings[1].cumulative &&
+    standings[0].power === standings[1].power;
+
+  const blocker =
+    players.length === 0
+      ? "場上沒有玩家"
+      : noFaction.length > 0
+        ? `${noFaction.map((p) => p.name).join("、")} 還沒設定陣營，請先到「設定」分頁套用`
+        : missing.length > 0
+          ? `${missing.map((p) => p.name).join("、")} 沒有填暱稱，聘書無法署名`
+          : deadlock
+            ? `${standings[0].name} 與 ${standings[1].name} 同陣營且累計與最終勢力都相同，請先調整再發放`
+            : !standings
+              ? "排名讀取中…"
+              : "";
 
   return (
     <Panel className="p-3">
@@ -1073,30 +1110,59 @@ function CertificatePanel({
         </p>
       ) : (
         <>
-          <ul className="space-y-1.5">
-            {ordered.map((p, i) => (
-              <li key={p.id} className="flex gap-2 text-xs">
-                <span className="tabular w-4 shrink-0 pt-px text-right text-muted/60">{i + 1}</span>
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-baseline gap-1.5">
-                    <span className="min-w-0 truncate">
-                      <span className="text-paper/85">{p.nickname.trim() || p.name}</span>
-                      {p.nickname.trim() ? (
-                        <span className="ml-1 text-[10px] text-muted/60">{p.name}</span>
-                      ) : (
-                        <span className="ml-1 text-[10px] text-vermilion-soft">缺暱稱</span>
-                      )}
+          {loadError ? <Notice>{loadError}</Notice> : null}
+          {!standings && !loadError ? (
+            <p className="py-3 text-center text-xs text-muted/70">計算排名中…</p>
+          ) : null}
+
+          {standings ? (
+            <ul className="space-y-1.5">
+              {standings.map((p, i) => {
+                const first = i === 0 || standings[i - 1].faction !== p.faction;
+                return (
+                  <li key={p.playerId}>
+                    {first ? (
+                      <p className="mt-2 mb-1 flex items-baseline gap-1.5 text-[11px] first:mt-0">
+                        <span className="text-gold">{p.faction || "未設定陣營"}</span>
+                        <span className="tabular text-muted/60">
+                          陣營累計 {p.factionTotal}
+                        </span>
+                      </p>
+                    ) : null}
+                    <span className="flex gap-2 text-xs">
+                      <span className="tabular w-4 shrink-0 pt-px text-right text-muted/60">
+                        {i + 1}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-baseline gap-1.5">
+                          <span className="min-w-0 truncate">
+                            <span className="text-paper/85">{p.nickname.trim() || p.name}</span>
+                            {p.nickname.trim() ? (
+                              <span className="ml-1 text-[10px] text-muted/60">{p.name}</span>
+                            ) : (
+                              <span className="ml-1 text-[10px] text-vermilion-soft">缺暱稱</span>
+                            )}
+                          </span>
+                          <span className="tabular ml-auto shrink-0 text-jade-soft">
+                            累計 {p.cumulative}
+                          </span>
+                        </span>
+                        <span className="flex items-baseline gap-1.5">
+                          {/* 稱號放第二行，7 個稱號長短差很多，擠在同一行一定被截掉 */}
+                          <span className="min-w-0 truncate text-[11px] leading-snug text-gold-soft">
+                            {positionForRank(i + 1)}・{titleForRank(i + 1)}
+                          </span>
+                          <span className="tabular ml-auto shrink-0 text-[10px] text-muted/50">
+                            最終 {p.power}
+                          </span>
+                        </span>
+                      </span>
                     </span>
-                    <span className="tabular ml-auto shrink-0 text-muted">{p.power}</span>
-                  </span>
-                  {/* 稱號放第二行，7 個稱號長短差很多，擠在同一行一定被截掉 */}
-                  <span className="block text-[11px] leading-snug text-gold-soft">
-                    {positionForRank(i + 1)}・{titleForRank(i + 1)}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
 
           {blocker ? <p className="mt-2 text-[11px] text-vermilion-soft">{blocker}</p> : null}
 
@@ -1108,8 +1174,8 @@ function CertificatePanel({
               if (
                 !confirm(
                   issued
-                    ? "重新發放聘書？會依目前的勢力值排名覆蓋原本的名次。"
-                    : `依目前勢力值排名發放聘書給 ${ordered.length} 名玩家？`,
+                    ? "重新發放聘書？會依目前的排名覆蓋原本的名次。"
+                    : `依上面的排名發放聘書給 ${players.length} 名玩家？`,
                 )
               )
                 return;
@@ -1119,6 +1185,8 @@ function CertificatePanel({
             {issued ? "重新發放聘書" : "發放聘書"}
           </Button>
           <p className="mt-2 text-[11px] leading-relaxed text-muted/70">
+            名次先看陣營（累計總和高的陣營在前），同陣營再比個人累計獲得勢力。
+            累計不含玩家之間的轉贈，拍賣付出去的會扣掉。
             發放後玩家在「我的」分頁就會看到自己的聘書。
           </p>
         </>

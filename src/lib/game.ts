@@ -944,6 +944,8 @@ async function archiveLocked(entry: CacheEntry): Promise<void> {
 /** 把一場的所有資料排成一張表。分區塊，人看得懂為主。 */
 function buildArchiveRows(entry: CacheEntry, log: LogEntry[]): (string | number)[][] {
   const { session, players, reports } = entry;
+  // log 是完整的流水帳（archiveLocked 特地重讀過），算得出累計
+  const totals = cumulativePower(log);
   const stage = STAGE_MAP[session.stageId];
   const rows: (string | number)[][] = [
     ["場次", session.code],
@@ -958,6 +960,8 @@ function buildArchiveRows(entry: CacheEntry, log: LogEntry[]): (string | number)
       // 通行碼要留著——場次結束後玩家回來看紀錄，就是靠它認人
       "玩家代碼", "通行碼", "角色", "暱稱", "聘書名次", "職位", "稱號",
       "真實陣營", "隱藏分支", "勢力值", "威望值", "血量", "狀態", "加入時間",
+      // 名次是依累計算的，只留最終勢力值的話，事後看試算表會覺得名次排錯
+      "累計獲得勢力",
     ],
   ];
 
@@ -980,6 +984,7 @@ function buildArchiveRows(entry: CacheEntry, log: LogEntry[]): (string | number)
       p.hp,
       p.status,
       p.joinedAt,
+      totals.get(p.id) ?? 0,
     ]);
   }
 
@@ -2208,6 +2213,101 @@ export async function drawRecruit(
  * 依規則，第 1 名與第 2 名同分時不可自動判定會長，必須由主持人先處理，
  * 所以這裡會擋下來而不是自行選一個。
  */
+// ---------------- 最終排名 ----------------
+
+/**
+ * 最終排名用的「累計獲得勢力」。
+ *
+ * 為什麼不直接用最終勢力值：到了終盤，點數大概率會收斂在一兩個人身上
+ * （互相轉贈、拍賣買賣），那個數字反映的是錢最後停在誰手上，不是誰真的賺得多。
+ *
+ * 算法：把該玩家所有「勢力值」的異動加總，**排除玩家間轉贈**。
+ *   - 算淨額：拍賣付出去的、被陷害扣掉的都要減
+ *   - 技能卡全部計入（暗奪偷到的算你的，被偷的那邊就扣）
+ *   - 只有「玩家間轉贈」不算——那是同行玩家給的，不是自己賺的
+ *
+ * 一定要讀完整的流水帳：快取只留最近 LOG_TAIL 筆，拿那個算會少一大截。
+ */
+const TRANSFER_SOURCE = "玩家間轉贈";
+
+export function cumulativePower(logs: LogEntry[]): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const e of logs) {
+    if (e.resource !== "勢力值") continue;
+    if (e.source === TRANSFER_SOURCE) continue;
+    if (typeof e.delta !== "number") continue;
+    if (!e.playerId) continue;
+    totals.set(e.playerId, (totals.get(e.playerId) ?? 0) + e.delta);
+  }
+  return totals;
+}
+
+export interface Standing {
+  playerId: string;
+  name: string;
+  nickname: string;
+  faction: string;
+  /** 該陣營的累計總和，用來決定陣營先後 */
+  factionTotal: number;
+  /** 本人的累計獲得勢力 */
+  cumulative: number;
+  /** 最終勢力值，只在累計同分時當次要依據 */
+  power: number;
+}
+
+/**
+ * 依「陣營 → 累計獲得勢力」排出最終名次。
+ *
+ * 陣營的先後由各陣營成員的累計總和決定（總和高的陣營獲勝）。
+ * 同陣營內比個人累計；再同分比最終勢力值；還同分就比入場順序。
+ * 沒設定陣營的排在最後。
+ */
+export function rankStandings(players: Player[], totals: Map<string, number>): Standing[] {
+  const active = players.filter((p) => p.status === "active");
+
+  const factionTotals = new Map<string, number>();
+  for (const p of active) {
+    if (!p.faction) continue;
+    factionTotals.set(p.faction, (factionTotals.get(p.faction) ?? 0) + (totals.get(p.id) ?? 0));
+  }
+
+  const factionOrder = new Map<string, number>();
+  [...factionTotals.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .forEach(([faction], i) => factionOrder.set(faction, i));
+
+  return active
+    .map((p) => ({
+      playerId: p.id,
+      name: p.name,
+      nickname: p.nickname,
+      faction: p.faction,
+      factionTotal: p.faction ? (factionTotals.get(p.faction) ?? 0) : 0,
+      cumulative: totals.get(p.id) ?? 0,
+      power: p.power,
+      // 排序用，不回給前端
+      _order: p.faction ? (factionOrder.get(p.faction) ?? 99) : 99,
+      _joined: p.joinedAt,
+    }))
+    .sort(
+      (a, b) =>
+        a._order - b._order ||
+        b.cumulative - a.cumulative ||
+        b.power - a.power ||
+        a._joined.localeCompare(b._joined),
+    )
+    .map(({ _order: _o, _joined: _j, ...rest }) => rest);
+}
+
+/** 讀完整流水帳並排出名次。主持人預覽與實際發放共用這條路徑。 */
+export async function getStandings(code: string): Promise<Standing[]> {
+  const entry = await getEntry(code);
+  const logs = await getDriver()
+    .listLog(code, Number.MAX_SAFE_INTEGER)
+    .catch(() => entry.log);
+  return rankStandings(entry.players, cumulativePower(logs));
+}
+
 export async function issueCertificates(code: string): Promise<{ issued: number }> {
   return withLock(code, async () => {
     const entry = await getEntryLocked(code);
@@ -2222,15 +2322,39 @@ export async function issueCertificates(code: string): Promise<{ issued: number 
       );
     }
 
-    const ordered = [...active].sort(
-      (a, b) => b.power - a.power || a.joinedAt.localeCompare(b.joinedAt),
-    );
-    if (ordered.length >= 2 && ordered[0].power === ordered[1].power) {
+    const noFaction = active.filter((p) => !p.faction);
+    if (noFaction.length > 0) {
       throw new GameError(
         "BAD_REQUEST",
-        `${ordered[0].name} 與 ${ordered[1].name} 勢力值同為 ${ordered[0].power}，` +
-          "無法自動判定會長，請先調整後再發放",
+        `${noFaction.map((p) => p.name).join("、")} 還沒設定陣營，無法依陣營排名。` +
+          "可以在「設定」分頁按「依劇本套用」。",
       );
+    }
+
+    // 排名依「陣營 → 累計獲得勢力」。要讀完整流水帳，快取只有最近幾十筆。
+    const logs0 = await getDriver()
+      .listLog(code, Number.MAX_SAFE_INTEGER)
+      .catch(() => entry.log);
+    const standings = rankStandings(active, cumulativePower(logs0));
+    const byId = new Map(active.map((p) => [p.id, p]));
+    const ordered = standings
+      .map((s) => byId.get(s.playerId))
+      .filter((p): p is Player => Boolean(p));
+
+    // 依規則，冠亞軍完全分不出高下時要由主持人介入，不自行挑一個
+    if (standings.length >= 2) {
+      const [first, second] = standings;
+      if (
+        first.faction === second.faction &&
+        first.cumulative === second.cumulative &&
+        first.power === second.power
+      ) {
+        throw new GameError(
+          "BAD_REQUEST",
+          `${first.name} 與 ${second.name} 同陣營、累計獲得勢力與最終勢力值都相同` +
+            `（累計 ${first.cumulative}），無法自動判定會長，請先調整後再發放`,
+        );
+      }
     }
 
     const now = new Date().toISOString();
